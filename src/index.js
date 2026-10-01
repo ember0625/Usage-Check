@@ -39,6 +39,18 @@ async function handle(request, env, ctx) {
     return html(renderPage({ authed }));
   }
   if (pathname === "/manifest.webmanifest") return manifest();
+  if (pathname.startsWith("/relay/")) return relay(request, env, pathname);
+
+  // 로그인 페이지로 바로 보내는 링크. 비동기 처리 없이 열 수 있어서 휴대폰 팝업 차단에 걸리지 않아요.
+  // 홈 화면 앱에서 연 링크는 Safari로 넘어가 쿠키가 없을 수 있어서, 1회용 토큰(t)도 받아요.
+  if (pathname === "/claude/login" && request.method === "GET") {
+    const t = url.searchParams.get("t");
+    const viaToken = !!t && !!(await env.KV.get(`claudelogin:${t}`));
+    if (!authed && !viaToken) return Response.redirect(new URL("/", url), 302);
+    if (viaToken) await env.KV.delete(`claudelogin:${t}`);
+    const { url: target } = await claude.startLogin(env.KV);
+    return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
+  }
 
   if (!authed) return json({ error: "unauthorized" }, 401);
   if (request.method === "POST" && request.headers.get("Content-Type")?.includes("application/json") !== true) {
@@ -65,7 +77,10 @@ async function handle(request, env, ctx) {
     }
     if (action === "poll" && name === "codex") {
       const r = await p.pollLogin(env.KV);
-      if (!r.pending) ctx.waitUntil(refreshOne(env, name));
+      if (!r.pending) {
+        await env.KV.delete(`usage:${name}`);
+        ctx.waitUntil(refreshOne(env, name));
+      }
       return json(r);
     }
     if (action === "disconnect") {
@@ -78,7 +93,14 @@ async function handle(request, env, ctx) {
   return json({ error: "not found" }, 404);
 }
 
+// chatgpt.com이 Cloudflare Worker에서 오는 요청을 막아서, RELAY_SECRET이 있으면
+// Codex 조회는 GitHub Actions(scripts/codex-relay.mjs)가 대신 해요.
+function usesRelay(env, name) {
+  return name === "codex" && !!env.RELAY_SECRET;
+}
+
 async function refreshOne(env, name) {
+  if (usesRelay(env, name)) return;
   const p = PROVIDERS[name];
   const prev = await getJson(env.KV, `usage:${name}`);
   let entry;
@@ -109,10 +131,58 @@ async function readAll(env) {
   const out = {};
   for (const [name, p] of Object.entries(PROVIDERS)) {
     const [connected, usage] = await Promise.all([p.isConnected(env.KV), getJson(env.KV, `usage:${name}`)]);
-    out[name] = { connected, usage };
+    out[name] = { connected, usage, relay: usesRelay(env, name) };
+  }
+  if (!out.claude.connected || out.claude.usage?.needs_reconnect) {
+    const t = randomToken(24);
+    await env.KV.put(`claudelogin:${t}`, "1", { expirationTtl: 1800 });
+    out.claude.login_url = `/claude/login?t=${t}`;
   }
   out.now = now();
   return out;
+}
+
+// ---- GitHub Actions 중계 (Codex) ----
+
+async function relay(request, env, pathname) {
+  if (!env.RELAY_SECRET) return json({ error: "RELAY_SECRET이 설정되지 않았어요." }, 404);
+  const auth = request.headers.get("Authorization") || "";
+  if (!(await safeEqual(auth, `Bearer ${env.RELAY_SECRET}`))) return json({ error: "unauthorized" }, 401);
+
+  if (pathname === "/relay/codex/token" && request.method === "GET") {
+    const force = new URL(request.url).searchParams.get("force") === "1";
+    try {
+      const t = force ? await codex.forceRefresh(env.KV) : await codex.getAccessToken(env.KV);
+      return json(t ? { connected: true, ...t } : { connected: false });
+    } catch (err) {
+      await saveRelayError(env, err.message, err instanceof AuthExpiredError);
+      return json({ error: err.message }, 502);
+    }
+  }
+
+  if (pathname === "/relay/codex/usage" && request.method === "POST") {
+    const body = await request.json().catch(() => null);
+    if (!body) return json({ error: "잘못된 요청" }, 400);
+    if (body.ok) {
+      await putJson(env.KV, "usage:codex", { ok: true, fetched_at: now(), ...codex.normalize(body.data) });
+    } else {
+      await saveRelayError(env, String(body.error || "알 수 없는 오류"), body.status === 401);
+    }
+    return json({ ok: true });
+  }
+
+  return json({ error: "not found" }, 404);
+}
+
+async function saveRelayError(env, message, needsReconnect) {
+  const prev = await getJson(env.KV, "usage:codex");
+  await putJson(env.KV, "usage:codex", {
+    ...(prev || {}),
+    ok: false,
+    error: message,
+    needs_reconnect: needsReconnect,
+    error_at: now(),
+  });
 }
 
 // ---- 인증 ----
