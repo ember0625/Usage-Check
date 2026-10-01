@@ -386,7 +386,10 @@ $("#logout").addEventListener("click", logout);
 // 다른 탭에서 돌아왔을 때 숫자만 새로 받아와요. 입력 중인 코드와 진행 상태는 flows에 남아 있어요.
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !flows.claudeBusy) load(false); });
 setInterval(tickResets, 30000);
-load(false);
+// 위젯의 새로고침 아이콘은 /?refresh=1로 열려요. 바로 새로 조회하고 주소는 원래대로 돌려놔요.
+const fromWidget = new URLSearchParams(location.search).get("refresh") === "1";
+if (fromWidget) history.replaceState(null, "", "/");
+load(fromWidget);
 `;
 
 const LOGIN_SCRIPT = `

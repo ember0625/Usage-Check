@@ -5,6 +5,8 @@ export function widgetScript(origin, key) {
 // 대시보드: ${origin}/
 const API = ${JSON.stringify(`${origin}/api/widget?key=${key}`)};
 const DASHBOARD = ${JSON.stringify(`${origin}/`)};
+// 새로고침 아이콘: 대시보드를 열고 바로 새로 조회해요.
+const REFRESH = ${JSON.stringify(`${origin}/?refresh=1`)};
 
 const C = {
   bg: Color.dynamic(new Color("#ffffff"), new Color("#15171c")),
@@ -16,6 +18,13 @@ const C = {
   bad: new Color("#ef4444"),
   claude: new Color("#d97757"),
   codex: new Color("#10a37f"),
+};
+
+// 위젯 크기별 글자·막대 크기
+const SIZES = {
+  small: { width: 118, name: 12, label: 11, pct: 13, bar: 5, rowGap: 5, remain: false, max: 2 },
+  medium: { width: 138, name: 14, label: 12, pct: 16, bar: 7, rowGap: 9, remain: true, max: 2 },
+  large: { width: 138, name: 15, label: 13, pct: 17, bar: 7, rowGap: 11, remain: true, max: 5 },
 };
 
 async function load() {
@@ -50,117 +59,116 @@ function remain(ts) {
   return m + "분";
 }
 
-function addRow(parent, w, width, compact) {
+function addText(parent, text, font, color) {
+  const t = parent.addText(text);
+  t.font = font;
+  t.textColor = color;
+  t.lineLimit = 1;
+  return t;
+}
+
+function addRow(parent, w, S) {
   const row = parent.addStack();
   row.layoutVertically();
   const top = row.addStack();
-  top.size = new Size(width, 0);
+  top.size = new Size(S.width, 0);
   top.layoutHorizontally();
-  top.centerAlignContent();
-  const lt = top.addText(shortLabel(w.label));
-  lt.font = Font.mediumSystemFont(compact ? 10 : 11);
-  lt.textColor = C.text;
-  lt.lineLimit = 1;
-  if (!compact) {
+  top.bottomAlignContent();
+  addText(top, shortLabel(w.label), Font.mediumSystemFont(S.label), C.text);
+  if (S.remain) {
     top.addSpacer(4);
-    const rt = top.addText(remain(w.resets_at));
-    rt.font = Font.systemFont(9);
-    rt.textColor = C.muted;
-    rt.lineLimit = 1;
+    const r = addText(top, remain(w.resets_at), Font.systemFont(S.label - 2), C.muted);
+    r.minimumScaleFactor = 0.8;
   }
   top.addSpacer();
   const p = Math.max(0, Math.min(100, w.used_percent));
-  const pt = top.addText(Math.round(w.used_percent) + "%");
-  pt.font = Font.boldSystemFont(compact ? 11 : 12);
-  pt.textColor = levelColor(p);
-  row.addSpacer(2);
+  addText(top, Math.round(w.used_percent) + "%", Font.boldRoundedSystemFont(S.pct), levelColor(p));
+  row.addSpacer(3);
   const bar = row.addStack();
-  bar.size = new Size(width, 4);
+  bar.size = new Size(S.width, S.bar);
   bar.backgroundColor = C.track;
-  bar.cornerRadius = 2;
+  bar.cornerRadius = S.bar / 2;
   bar.layoutHorizontally();
   if (p > 0) {
     const fill = bar.addStack();
-    fill.size = new Size(Math.max(4, (width * p) / 100), 4);
+    fill.size = new Size(Math.max(S.bar, (S.width * p) / 100), S.bar);
     fill.backgroundColor = levelColor(p);
-    fill.cornerRadius = 2;
+    fill.cornerRadius = S.bar / 2;
   }
   bar.addSpacer();
 }
 
-function addNote(parent, text, color) {
-  const t = parent.addText(text);
-  t.font = Font.systemFont(10);
-  t.textColor = color || C.muted;
-  t.lineLimit = 1;
-}
-
-function addProvider(parent, name, color, p, width, max, compact) {
+function addProvider(parent, name, color, p, S) {
   const col = parent.addStack();
   col.layoutVertically();
   const h = col.addStack();
   h.centerAlignContent();
-  const dot = h.addText("●");
-  dot.font = Font.systemFont(8);
-  dot.textColor = color;
-  h.addSpacer(4);
-  const t = h.addText(name);
-  t.font = Font.boldSystemFont(compact ? 11 : 12);
-  t.textColor = C.text;
-  col.addSpacer(compact ? 3 : 5);
-  if (!p || !p.connected) return addNote(col, "연결 안 됨");
-  const ws = (p.windows || []).slice(0, max);
-  if (!ws.length) return addNote(col, "데이터 없음");
+  addText(h, "●", Font.systemFont(S.name - 4), color);
+  h.addSpacer(5);
+  addText(h, name, Font.boldSystemFont(S.name), C.text);
+  col.addSpacer(S.rowGap - 2);
+  if (!p || !p.connected) return addText(col, "연결 안 됨", Font.systemFont(S.label), C.muted);
+  const ws = (p.windows || []).slice(0, S.max);
+  if (!ws.length) return addText(col, "데이터 없음", Font.systemFont(S.label), C.muted);
   ws.forEach((w, i) => {
-    if (i) col.addSpacer(compact ? 4 : 6);
-    addRow(col, w, width, compact);
+    if (i) col.addSpacer(S.rowGap);
+    addRow(col, w, S);
   });
   if (p.ok === false) {
-    col.addSpacer(3);
-    addNote(col, "갱신 실패 · 대시보드 확인", C.bad);
+    col.addSpacer(4);
+    addText(col, "갱신 실패", Font.systemFont(S.label - 2), C.bad);
   }
+}
+
+function addFooter(parent, S, family) {
+  const f = parent.addStack();
+  f.layoutHorizontally();
+  f.centerAlignContent();
+  const df = new DateFormatter();
+  df.dateFormat = "HH:mm";
+  addText(f, df.string(new Date()) + " 기준", Font.systemFont(S.label - 2), C.muted);
+  f.addSpacer();
+  const btn = f.addStack();
+  btn.centerAlignContent();
+  // 작은 위젯은 iOS 제약으로 부분 터치가 안 돼서 위젯 전체가 새로고침 링크예요.
+  if (family !== "small") btn.url = REFRESH;
+  const sym = SFSymbol.named("arrow.clockwise");
+  sym.applyFont(Font.semiboldSystemFont(S.name));
+  const img = btn.addImage(sym.image);
+  img.imageSize = new Size(S.name + 2, S.name + 2);
+  img.tintColor = C.muted;
 }
 
 const data = await load();
 const family = config.widgetFamily || "medium";
+const S = SIZES[family] || SIZES.medium;
 const widget = new ListWidget();
 widget.backgroundColor = C.bg;
-widget.url = DASHBOARD;
+widget.url = family === "small" ? REFRESH : DASHBOARD;
 widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
+widget.setPadding(family === "small" ? 12 : 14, 15, family === "small" ? 10 : 12, 15);
 
 if (data.error) {
-  widget.setPadding(12, 14, 12, 14);
-  addNote(widget, "AI 사용량", C.text);
-  widget.addSpacer(4);
-  addNote(widget, data.error === "unauthorized" ? "위젯 키가 바뀌었어요. 스크립트를 다시 복사하세요." : "불러오기 실패", C.bad);
-} else if (family === "small") {
-  widget.setPadding(10, 12, 10, 12);
-  addProvider(widget, "Claude", C.claude, data.claude, 112, 2, true);
+  addText(widget, "AI 사용량", Font.boldSystemFont(S.name), C.text);
   widget.addSpacer(6);
-  addProvider(widget, "Codex", C.codex, data.codex, 112, 2, true);
+  addText(widget, data.error === "unauthorized" ? "위젯 키가 바뀌었어요. 스크립트를 다시 복사하세요." : "불러오기 실패", Font.systemFont(S.label), C.bad);
   widget.addSpacer();
+  addFooter(widget, S, family);
+} else if (family === "small") {
+  addProvider(widget, "Claude", C.claude, data.claude, S);
+  widget.addSpacer();
+  addProvider(widget, "Codex", C.codex, data.codex, S);
+  widget.addSpacer();
+  addFooter(widget, S, family);
 } else {
-  widget.setPadding(12, 14, 12, 14);
-  const head = widget.addStack();
-  head.centerAlignContent();
-  const title = head.addText("AI 사용량");
-  title.font = Font.boldSystemFont(13);
-  title.textColor = C.text;
-  head.addSpacer();
-  const df = new DateFormatter();
-  df.dateFormat = "HH:mm";
-  const upd = head.addText(df.string(new Date()) + " 기준");
-  upd.font = Font.systemFont(10);
-  upd.textColor = C.muted;
-  widget.addSpacer(8);
-  const max = family === "large" ? 5 : 2;
   const cols = widget.addStack();
   cols.layoutHorizontally();
   cols.topAlignContent();
-  addProvider(cols, "Claude", C.claude, data.claude, 138, max, false);
+  addProvider(cols, "Claude", C.claude, data.claude, S);
   cols.addSpacer();
-  addProvider(cols, "Codex", C.codex, data.codex, 138, max, false);
+  addProvider(cols, "Codex", C.codex, data.codex, S);
   widget.addSpacer();
+  addFooter(widget, S, family);
 }
 
 if (config.runsInWidget) Script.setWidget(widget);
