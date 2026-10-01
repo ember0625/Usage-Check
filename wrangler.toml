@@ -11,5 +11,9 @@ binding = "KV"
 [triggers]
 crons = ["*/15 * * * *"]
 
+[vars]
+# 새로고침 때 Codex 중계 워크플로를 실행할 레포
+GITHUB_REPO = "ember0625/Usage-Check"
+
 # 대시보드 비밀번호는 Cloudflare 대시보드에서 Secret으로 등록하세요.
 #   이름: DASHBOARD_PASSWORD

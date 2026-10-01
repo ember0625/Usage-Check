@@ -1,6 +1,7 @@
 import * as claude from "./claude.js";
 import * as codex from "./codex.js";
 import { ICON_SVG, renderPage } from "./page.js";
+import { widgetScript } from "./widget.js";
 import { AuthExpiredError, getJson, putJson, randomToken } from "./util.js";
 
 const PROVIDERS = { claude, codex };
@@ -40,6 +41,7 @@ async function handle(request, env, ctx) {
   }
   if (pathname === "/manifest.webmanifest") return manifest();
   if (pathname.startsWith("/relay/")) return relay(request, env, pathname);
+  if (pathname === "/api/widget" && request.method === "GET") return widgetData(env, url);
 
   // 로그인 페이지로 바로 보내는 링크. 비동기 처리 없이 열 수 있어서 휴대폰 팝업 차단에 걸리지 않아요.
   // 홈 화면 앱에서 연 링크는 Safari로 넘어가 쿠키가 없을 수 있어서, 1회용 토큰(t)도 받아요.
@@ -60,8 +62,24 @@ async function handle(request, env, ctx) {
   if (pathname === "/api/logout" && request.method === "POST") return logout(request, env);
 
   if (pathname === "/api/usage" && request.method === "GET") {
-    if (url.searchParams.get("refresh") === "1") await refreshAll(env);
-    return json(await readAll(env));
+    let dispatch;
+    if (url.searchParams.get("refresh") === "1") {
+      [, dispatch] = await Promise.all([refreshAll(env), dispatchCodex(env)]);
+    }
+    const out = await readAll(env);
+    if (dispatch) out.codex.dispatch = dispatch;
+    return json(out);
+  }
+
+  if (pathname === "/api/widget/key" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    return json({ key: await widgetKey(env, !!body.rotate) });
+  }
+  if (pathname === "/widget.js" && request.method === "GET") {
+    const key = await widgetKey(env, false);
+    return new Response(widgetScript(url.origin, key), {
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
   }
 
   const m = pathname.match(/^\/api\/(claude|codex)\/(start|finish|poll|disconnect)$/);
@@ -127,7 +145,7 @@ async function refreshAll(env) {
   await Promise.all(Object.keys(PROVIDERS).map((n) => refreshOne(env, n)));
 }
 
-async function readAll(env) {
+async function readAll(env, { skipLoginToken = false } = {}) {
   const out = {};
   for (const [name, p] of Object.entries(PROVIDERS)) {
     const relayMode = usesRelay(env, name);
@@ -136,13 +154,74 @@ async function readAll(env) {
     if (relayMode && usage && usage.via !== "relay") usage = null;
     out[name] = { connected, usage, relay: relayMode };
   }
-  if (!out.claude.connected || out.claude.usage?.needs_reconnect) {
+  if (!skipLoginToken && (!out.claude.connected || out.claude.usage?.needs_reconnect)) {
     const t = randomToken(24);
     await env.KV.put(`claudelogin:${t}`, "1", { expirationTtl: 1800 });
     out.claude.login_url = `/claude/login?t=${t}`;
   }
   out.now = now();
   return out;
+}
+
+// ---- 새로고침 시 Codex 중계 즉시 실행 ----
+
+// GITHUB_TOKEN(이 레포의 Actions 쓰기 권한만 있는 토큰)이 있으면 워크플로를 바로 실행해요.
+// Actions 무료 시간을 아끼려고 2분에 한 번까지만 실행해요.
+async function dispatchCodex(env) {
+  if (!usesRelay(env, "codex") || !(await codex.isConnected(env.KV))) return null;
+  const token = (env.GITHUB_TOKEN || "").trim();
+  if (!token) return { started: false, reason: "no_token" };
+  const last = Number(await env.KV.get("dispatch:codex")) || 0;
+  if (now() - last < 120) return { started: false, reason: "recent", at: last };
+
+  const repo = env.GITHUB_REPO || "ember0625/Usage-Check";
+  const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/codex-usage.yml/dispatches`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "usage-check",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ref: "main" }),
+  });
+  if (res.status !== 204) {
+    const hint =
+      res.status === 401
+        ? "GITHUB_TOKEN이 틀렸거나 만료됐어요."
+        : res.status === 403 || res.status === 404
+          ? "GITHUB_TOKEN에 이 레포의 Actions 쓰기 권한이 없어요."
+          : (await res.text().catch(() => "")).slice(0, 200);
+    return { started: false, reason: "error", error: `Codex 즉시 조회 실패 (HTTP ${res.status}): ${hint}` };
+  }
+  await env.KV.put("dispatch:codex", String(now()), { expirationTtl: 300 });
+  return { started: true, at: now() };
+}
+
+// ---- iOS 위젯 (Scriptable) ----
+
+async function widgetKey(env, rotate) {
+  let key = rotate ? null : await env.KV.get("widget:key");
+  if (!key) {
+    key = randomToken(24);
+    await env.KV.put("widget:key", key);
+  }
+  return key;
+}
+
+async function widgetData(env, url) {
+  const key = await env.KV.get("widget:key");
+  const given = url.searchParams.get("key") || "";
+  if (!key || !(await safeEqual(given, key))) return json({ error: "unauthorized" }, 401);
+  const all = await readAll(env, { skipLoginToken: true });
+  const pick = (p) => ({
+    connected: p.connected,
+    ok: p.usage?.ok ?? null,
+    fetched_at: p.usage?.fetched_at ?? null,
+    windows: (p.usage?.windows || []).map(({ label, used_percent, resets_at }) => ({ label, used_percent, resets_at })),
+  });
+  return json({ claude: pick(all.claude), codex: pick(all.codex), now: all.now });
 }
 
 // ---- GitHub Actions 중계 (Codex) ----

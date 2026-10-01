@@ -56,6 +56,7 @@ ol li { margin: 6px 0; }
 .code { font: 700 28px/1.2 ui-monospace, Menlo, monospace; letter-spacing: .12em; text-align: center; padding: 12px; border: 1px dashed var(--line); border-radius: 12px; margin: 8px 0; user-select: all; }
 details { margin-top: 10px; }
 summary { color: var(--muted); font-size: 13px; cursor: pointer; }
+details.card > summary { color: var(--text); font-size: 17px; }
 pre { font-size: 11px; overflow-x: auto; background: var(--bg); padding: 8px; border-radius: 8px; }
 footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 18px; }
 .hidden { display: none !important; }
@@ -251,6 +252,7 @@ function renderCard(name) {
     if (u.windows && u.windows.length) u.windows.forEach((w) => card.append(renderWindow(w)));
     else card.append(el("p", { class: "msg" }, "한도 정보가 없어요."));
     if (u.fetched_at) card.append(el("div", { class: "sub" }, "마지막 성공: " + ago(u.fetched_at) + (s.relay ? " · GitHub Actions로 갱신" : "")));
+    if (name === "codex") { const n = codexWaitNote(); if (n) card.append(n); }
     const last = Math.max(u.fetched_at || 0, u.error_at || 0);
     if (s.relay && last && Date.now() / 1000 - last > 45 * 60) {
       card.append(el("div", { class: "err" }, "GitHub Actions가 " + ago(last) + " 이후로 실행되지 않았어요. 레포의 Actions 탭을 확인해 주세요."));
@@ -266,26 +268,106 @@ function renderCard(name) {
   return card;
 }
 
+function renderWidgetCard() {
+  const msg = el("div", { class: "sub" });
+  const copy = el("button", { onclick: () => copyWidget(msg) }, "위젯 스크립트 복사");
+  const rotate = el("button", { class: "ghost", onclick: () => rotateWidgetKey(msg) }, "위젯 키 새로 만들기");
+  return el("details", { class: "card" },
+    el("summary", { class: "name" }, "📱 iOS 위젯 만들기"),
+    el("ol", {},
+      el("li", {}, "App Store에서 무료 앱 'Scriptable'을 설치하세요."),
+      el("li", {}, "아래 '위젯 스크립트 복사'를 누르세요."),
+      el("li", {}, "Scriptable에서 오른쪽 위 + → 붙여넣기 → 맨 위 제목을 'AI 사용량'으로 바꾸고 Done."),
+      el("li", {}, "홈 화면을 길게 눌러 + → Scriptable 위젯(작게/중간) 추가."),
+      el("li", {}, "위젯을 길게 눌러 '위젯 편집' → Script를 'AI 사용량'으로 고르세요.")),
+    el("div", { class: "row" }, copy),
+    el("div", { class: "row" }, rotate),
+    msg,
+    el("p", { class: "sub" }, "스크립트에는 위젯 전용 키가 들어 있어요. 누군가에게 보여줬다면 '위젯 키 새로 만들기'를 누르고 다시 복사하세요."));
+}
+
+async function copyWidget(msg) {
+  msg.className = "sub";
+  msg.textContent = "복사 중…";
+  const text = fetch("/widget.js", { credentials: "same-origin" }).then((r) => {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  });
+  try {
+    // iOS Safari는 버튼을 누른 순간에 클립보드 쓰기를 시작해야 해서 Promise를 그대로 넘겨요.
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })) })]);
+    } else {
+      await navigator.clipboard.writeText(await text);
+    }
+    msg.textContent = "복사했어요! Scriptable에 붙여넣으세요.";
+  } catch (e) {
+    const area = el("textarea", { rows: "6", readonly: "" });
+    area.value = await text.catch(() => "");
+    msg.replaceChildren("자동 복사가 안 돼요. 아래 글을 길게 눌러 전체 선택 → 복사하세요.", area);
+  }
+}
+
+async function rotateWidgetKey(msg) {
+  if (!confirm("위젯 키를 새로 만들까요? 기존 위젯은 스크립트를 다시 복사해야 동작해요.")) return;
+  await api("/api/widget/key", { method: "POST", body: JSON.stringify({ rotate: true }) });
+  msg.className = "sub";
+  msg.textContent = "새 키를 만들었어요. '위젯 스크립트 복사'를 다시 눌러 Scriptable에 붙여넣으세요.";
+}
+
+let widgetCard = null;
+
 function render() {
   if (!state) return;
   const active = document.activeElement;
   const wasTyping = active && active.tagName === "TEXTAREA";
-  $("#cards").replaceChildren(...Object.keys(PROVIDERS).map(renderCard));
+  widgetCard = widgetCard || renderWidgetCard();
+  $("#cards").replaceChildren(...Object.keys(PROVIDERS).map(renderCard), widgetCard);
   if (wasTyping) { const t = document.querySelector("textarea"); if (t) t.focus(); }
   tickResets();
 }
+
+// 새로고침으로 GitHub Actions를 실행했으면, 새 Codex 값이 올라올 때까지 잠깐씩 다시 확인해요.
+let codexWait = null;
 
 async function load(refresh) {
   const btn = $("#refresh");
   btn.disabled = true;
   try {
     state = await api("/api/usage" + (refresh ? "?refresh=1" : ""));
+    const d = state.codex && state.codex.dispatch;
+    if (d && d.started) codexWait = { since: d.at, until: Date.now() + 150000 };
+    else if (d && d.reason === "recent" && !codexWait) codexWait = { since: d.at, until: Date.now() + 60000 };
+    else if (d && d.reason === "error") codexWait = { error: d.error };
     render();
+    scheduleCodexCheck();
   } catch (e) {
     $("#cards").replaceChildren(el("div", { class: "card err" }, e.message));
   } finally {
     btn.disabled = false;
   }
+}
+
+function codexUpdatedSince(since) {
+  const u = state && state.codex && state.codex.usage;
+  return !!u && Math.max(u.fetched_at || 0, u.error_at || 0) >= since;
+}
+
+function scheduleCodexCheck() {
+  if (!codexWait || codexWait.error) return;
+  if (codexUpdatedSince(codexWait.since) || Date.now() > codexWait.until) {
+    codexWait = null;
+    render();
+    return;
+  }
+  clearTimeout(scheduleCodexCheck.t);
+  scheduleCodexCheck.t = setTimeout(() => load(false), 8000);
+}
+
+function codexWaitNote() {
+  if (!codexWait) return null;
+  if (codexWait.error) return el("div", { class: "err" }, codexWait.error);
+  return el("div", { class: "sub" }, "GitHub Actions로 새로 조회하는 중… (30초~1분)");
 }
 
 async function disconnect(name) {
@@ -368,7 +450,7 @@ export function renderPage({ authed, setupMissing }) {
   return shell(
     `
 <header>
-  <div><h1>AI 사용량</h1><div class="sub">15분마다 자동 갱신</div></div>
+  <div><h1>AI 사용량</h1><div class="sub">Claude 15분 · Codex 30분마다 자동 갱신</div></div>
   <button id="refresh" class="ghost">새로고침</button>
 </header>
 <div id="cards"><p class="msg">불러오는 중…</p></div>
