@@ -38,7 +38,7 @@ Cloudflare Workers(무료)에서 돌아가고, 15분마다 자동으로 갱신�
 4. 브라우저 메뉴의 **홈 화면에 추가**를 누르면 앱처럼 쓸 수 있어요.
 
 ### 4. Codex 조회를 GitHub Actions로 돌리기 (필수)
-chatgpt.com이 Cloudflare Worker에서 오는 요청을 막아서(HTTP 403), Codex 사용량은 GitHub Actions가 30분마다 대신 조회해 Worker에 올려요.
+chatgpt.com이 Cloudflare Worker에서 오는 요청을 막아서(HTTP 403), Codex 사용량은 GitHub Actions가 15분마다 대신 조회해 Worker에 올려요.
 
 1. 아무도 추측 못 할 긴 문자열을 하나 정해요 (예: 비밀번호 생성기로 만든 32자). 이게 `RELAY_SECRET`이에요.
 2. **Cloudflare**: Worker → Settings → Variables and Secrets → Add → Secret, 이름 `RELAY_SECRET`, 값은 위 문자열 → Deploy
@@ -51,7 +51,7 @@ chatgpt.com이 Cloudflare Worker에서 오는 요청을 막아서(HTTP 403), Cod
 
 ### 5. 새로고침으로 Codex 바로 조회하기 (선택)
 대시보드의 **새로고침**을 누를 때 GitHub Actions를 바로 실행해요. 30초~1분 뒤 반영돼요.
-비공개 레포의 Actions 무료 시간(월 2,000분)을 아끼려고 2분에 한 번까지만 실행해요.
+연타로 워크플로가 겹치지 않게 1분에 한 번까지만 실행해요. (공개 레포라 Actions 사용 시간 제한은 없어요. 비공개로 돌리면 월 2,000분 한도가 생겨요.)
 
 1. GitHub → 오른쪽 위 프로필 → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**
    - Token name: `usage-check`, Expiration: 원하는 기간
