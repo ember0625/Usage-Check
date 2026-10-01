@@ -130,8 +130,11 @@ async function refreshAll(env) {
 async function readAll(env) {
   const out = {};
   for (const [name, p] of Object.entries(PROVIDERS)) {
-    const [connected, usage] = await Promise.all([p.isConnected(env.KV), getJson(env.KV, `usage:${name}`)]);
-    out[name] = { connected, usage, relay: usesRelay(env, name) };
+    const relayMode = usesRelay(env, name);
+    let [connected, usage] = await Promise.all([p.isConnected(env.KV), getJson(env.KV, `usage:${name}`)]);
+    // 중계 모드에선 Worker가 직접 조회하던 시절의 오래된 결과는 보여주지 않아요.
+    if (relayMode && usage && usage.via !== "relay") usage = null;
+    out[name] = { connected, usage, relay: relayMode };
   }
   if (!out.claude.connected || out.claude.usage?.needs_reconnect) {
     const t = randomToken(24);
@@ -164,7 +167,7 @@ async function relay(request, env, pathname) {
     const body = await request.json().catch(() => null);
     if (!body) return json({ error: "잘못된 요청" }, 400);
     if (body.ok) {
-      await putJson(env.KV, "usage:codex", { ok: true, fetched_at: now(), ...codex.normalize(body.data) });
+      await putJson(env.KV, "usage:codex", { ok: true, via: "relay", fetched_at: now(), ...codex.normalize(body.data) });
     } else {
       await saveRelayError(env, String(body.error || "알 수 없는 오류"), body.status === 401);
     }
@@ -179,6 +182,7 @@ async function saveRelayError(env, message, needsReconnect) {
   await putJson(env.KV, "usage:codex", {
     ...(prev || {}),
     ok: false,
+    via: "relay",
     error: message,
     needs_reconnect: needsReconnect,
     error_at: now(),

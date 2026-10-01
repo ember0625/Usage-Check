@@ -245,15 +245,20 @@ function renderCard(name) {
   if (u && u.plan) head.append(el("span", { class: "pill" }, u.plan));
   if (!u) {
     card.append(el("p", { class: "msg" }, s.relay
-      ? "GitHub Actions의 첫 조회를 기다리는 중이에요. 최대 15~20분 걸릴 수 있어요."
+      ? "GitHub Actions의 첫 조회를 기다리는 중이에요. 레포 → Actions → 'Codex 사용량 중계' → Run workflow로 바로 실행할 수 있어요."
       : "아직 데이터가 없어요. 새로고침을 눌러보세요."));
   } else {
     if (u.windows && u.windows.length) u.windows.forEach((w) => card.append(renderWindow(w)));
     else card.append(el("p", { class: "msg" }, "한도 정보가 없어요."));
     if (u.fetched_at) card.append(el("div", { class: "sub" }, "마지막 성공: " + ago(u.fetched_at) + (s.relay ? " · GitHub Actions로 갱신" : "")));
+    const last = Math.max(u.fetched_at || 0, u.error_at || 0);
+    if (s.relay && last && Date.now() / 1000 - last > 45 * 60) {
+      card.append(el("div", { class: "err" }, "GitHub Actions가 " + ago(last) + " 이후로 실행되지 않았어요. 레포의 Actions 탭을 확인해 주세요."));
+    }
     if (!u.ok) {
       if (u.needs_reconnect) card.append(el("div", { class: "err" }, "로그인이 만료됐어요. 다시 연결해 주세요."), connectForm(name, ""));
       else card.append(el("div", { class: "err" }, "갱신 실패: " + u.error));
+      if (name === "codex" && !s.relay) card.append(el("p", { class: "msg" }, "Codex는 Cloudflare에서 직접 조회하면 막혀요. Cloudflare Worker에 Secret RELAY_SECRET을 등록하면 GitHub Actions 중계로 바뀌어요."));
     }
     if (u.raw) card.append(el("details", {}, el("summary", {}, "원본 응답"), el("pre", {}, JSON.stringify(u.raw, null, 2))));
   }
