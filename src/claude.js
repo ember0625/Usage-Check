@@ -122,15 +122,17 @@ export async function fetchUsage(kv) {
 function normalize(raw) {
   const windows = [];
   for (const [key, w] of Object.entries(raw || {})) {
+    // 이름을 아는 한도만 보여줘요. 내부 코드명(예: iguana_necktie)은 숨겨요.
+    if (!LABELS[key]) continue;
     if (!w || typeof w !== "object" || typeof w.utilization !== "number") continue;
     windows.push({
       id: key,
-      label: LABELS[key] || key,
+      label: LABELS[key],
       used_percent: w.utilization,
       resets_at: toEpochSeconds(w.resets_at),
     });
   }
   const order = Object.keys(LABELS);
-  windows.sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99));
+  windows.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   return { windows, raw };
 }
