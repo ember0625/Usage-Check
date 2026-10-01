@@ -71,6 +71,10 @@ async function handle(request, env, ctx) {
     return json(out);
   }
 
+  if (pathname === "/api/claude/diag" && request.method === "GET") {
+    return json({ checked_at: new Date().toISOString(), results: await claude.diagnose() });
+  }
+
   if (pathname === "/api/widget/key" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     return json({ key: await widgetKey(env, !!body.rotate) });
