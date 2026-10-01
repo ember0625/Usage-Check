@@ -8,6 +8,28 @@ const PROVIDERS = { claude, codex };
 const SESSION_COOKIE = "uc_session";
 const SESSION_TTL = 60 * 60 * 24 * 30;
 
+// 화면 HTML과 manifest는 요청마다 바뀌지 않아서 한 번만 만들어 둬요. (무료 플랜 CPU 시간 절약)
+const PAGES = {
+  setup: renderPage({ setupMissing: true }),
+  login: renderPage({ authed: false }),
+  dashboard: renderPage({ authed: true }),
+};
+const MANIFEST = JSON.stringify({
+  name: "AI 사용량",
+  short_name: "사용량",
+  start_url: "/",
+  display: "standalone",
+  background_color: "#0C0D10",
+  theme_color: "#0C0D10",
+  icons: [
+    {
+      src: "data:image/svg+xml," + encodeURIComponent(ICON_SVG),
+      sizes: "any",
+      type: "image/svg+xml",
+    },
+  ],
+});
+
 export default {
   async fetch(request, env, ctx) {
     try {
@@ -27,21 +49,23 @@ async function handle(request, env, ctx) {
   const { pathname } = url;
 
   if (!env.DASHBOARD_PASSWORD) {
-    return html(renderPage({ setupMissing: true }));
+    return html(PAGES.setup);
   }
 
   if (pathname === "/api/login" && request.method === "POST") {
     return login(request, env);
   }
 
-  const authed = await isAuthed(request, env);
-
-  if (pathname === "/" || pathname === "/index.html") {
-    return html(renderPage({ authed }));
-  }
+  // 로그인 쿠키가 필요 없는 경로는 세션 확인(KV 읽기) 전에 처리해요.
   if (pathname === "/manifest.webmanifest") return manifest();
   if (pathname.startsWith("/relay/")) return relay(request, env, pathname);
   if (pathname === "/api/widget" && request.method === "GET") return widgetData(env, url);
+
+  const authed = await isAuthed(request, env);
+
+  if (pathname === "/" || pathname === "/index.html") {
+    return html(authed ? PAGES.dashboard : PAGES.login);
+  }
 
   // 로그인 페이지로 바로 보내는 링크. 비동기 처리 없이 열 수 있어서 휴대폰 팝업 차단에 걸리지 않아요.
   // 홈 화면 앱에서 연 링크는 Safari로 넘어가 쿠키가 없을 수 있어서, 1회용 토큰(t)도 받아요.
@@ -124,7 +148,6 @@ function usesRelay(env, name) {
 async function refreshOne(env, name) {
   if (usesRelay(env, name)) return;
   const p = PROVIDERS[name];
-  const prev = await getJson(env.KV, `usage:${name}`);
   let entry;
   try {
     const usage = await p.fetchUsage(env.KV);
@@ -134,6 +157,8 @@ async function refreshOne(env, name) {
     }
     entry = { ok: true, fetched_at: now(), ...usage };
   } catch (err) {
+    // 이전 값은 실패했을 때만 필요해서, 성공하면 읽지 않아요.
+    const prev = await getJson(env.KV, `usage:${name}`);
     entry = {
       ...(prev || {}),
       ok: false,
@@ -150,14 +175,17 @@ async function refreshAll(env) {
 }
 
 async function readAll(env, { skipLoginToken = false } = {}) {
-  const out = {};
-  for (const [name, p] of Object.entries(PROVIDERS)) {
-    const relayMode = usesRelay(env, name);
-    let [connected, usage] = await Promise.all([p.isConnected(env.KV), getJson(env.KV, `usage:${name}`)]);
-    // 중계 모드에선 Worker가 직접 조회하던 시절의 오래된 결과는 보여주지 않아요.
-    if (relayMode && usage && usage.via !== "relay") usage = null;
-    out[name] = { connected, usage, relay: relayMode };
-  }
+  // 두 서비스의 KV 읽기를 한꺼번에 하고, 결과는 항상 같은 순서(claude → codex)로 담아요.
+  const entries = await Promise.all(
+    Object.entries(PROVIDERS).map(async ([name, p]) => {
+      const relayMode = usesRelay(env, name);
+      let [connected, usage] = await Promise.all([p.isConnected(env.KV), getJson(env.KV, `usage:${name}`)]);
+      // 중계 모드에선 Worker가 직접 조회하던 시절의 오래된 결과는 보여주지 않아요.
+      if (relayMode && usage && usage.via !== "relay") usage = null;
+      return [name, { connected, usage, relay: relayMode }];
+    })
+  );
+  const out = Object.fromEntries(entries);
   if (!skipLoginToken && (!out.claude.connected || out.claude.usage?.needs_reconnect)) {
     const t = randomToken(24);
     await env.KV.put(`claudelogin:${t}`, "1", { expirationTtl: 1800 });
@@ -367,22 +395,5 @@ function html(body) {
 }
 
 function manifest() {
-  return new Response(
-    JSON.stringify({
-      name: "AI 사용량",
-      short_name: "사용량",
-      start_url: "/",
-      display: "standalone",
-      background_color: "#0C0D10",
-      theme_color: "#0C0D10",
-      icons: [
-        {
-          src: "data:image/svg+xml," + encodeURIComponent(ICON_SVG),
-          sizes: "any",
-          type: "image/svg+xml",
-        },
-      ],
-    }),
-    { headers: { "Content-Type": "application/manifest+json" } }
-  );
+  return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json" } });
 }
