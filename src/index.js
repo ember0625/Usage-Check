@@ -2,7 +2,11 @@ import * as claude from "./claude.js";
 import * as codex from "./codex.js";
 import { ICON_SVG, renderPage } from "./page.js";
 import { widgetScript } from "./widget.js";
+import { tokenStore } from "./tokens.js";
 import { AuthExpiredError, getJson, putJson, randomToken } from "./util.js";
+
+// 토큰 저장소 Durable Object (wrangler.toml의 TOKENS 바인딩)
+export { TokenStore } from "./tokens.js";
 
 const PROVIDERS = { claude, codex };
 const SESSION_COOKIE = "uc_session";
@@ -74,7 +78,7 @@ async function handle(request, env, ctx) {
     const viaToken = !!t && !!(await env.KV.get(`claudelogin:${t}`));
     if (!authed && !viaToken) return Response.redirect(new URL("/", url), 302);
     if (viaToken) await env.KV.delete(`claudelogin:${t}`);
-    const { url: target } = await claude.startLogin(env.KV);
+    const { url: target } = await claude.startLogin(env);
     return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
   }
 
@@ -96,7 +100,9 @@ async function handle(request, env, ctx) {
   }
 
   if (pathname === "/api/claude/diag" && request.method === "GET") {
-    return json({ checked_at: new Date().toISOString(), results: await claude.diagnose() });
+    const [results, history] = await Promise.all([claude.diagnose(), tokenStore(env).history()]);
+    // history: 토큰 갱신·거부 기록 (토큰 값은 들어 있지 않아요)
+    return json({ checked_at: new Date().toISOString(), results, history });
   }
 
   if (pathname === "/api/widget/key" && request.method === "POST") {
@@ -115,14 +121,14 @@ async function handle(request, env, ctx) {
     const [, name, action] = m;
     const p = PROVIDERS[name];
     const body = await request.json().catch(() => ({}));
-    if (action === "start") return json(await p.startLogin(env.KV));
+    if (action === "start") return json(await p.startLogin(env));
     if (action === "finish" && name === "claude") {
-      await p.finishLogin(env.KV, body.code);
+      await p.finishLogin(env, body.code);
       ctx.waitUntil(refreshOne(env, name));
       return json({ ok: true });
     }
     if (action === "poll" && name === "codex") {
-      const r = await p.pollLogin(env.KV);
+      const r = await p.pollLogin(env);
       if (!r.pending) {
         await env.KV.delete(`usage:${name}`);
         ctx.waitUntil(refreshOne(env, name));
@@ -130,7 +136,7 @@ async function handle(request, env, ctx) {
       return json(r);
     }
     if (action === "disconnect") {
-      await p.disconnect(env.KV);
+      await p.disconnect(env);
       await env.KV.delete(`usage:${name}`);
       return json({ ok: true });
     }
@@ -150,7 +156,7 @@ async function refreshOne(env, name) {
   const p = PROVIDERS[name];
   let entry;
   try {
-    const usage = await p.fetchUsage(env.KV);
+    const usage = await p.fetchUsage(env);
     if (!usage) {
       await env.KV.delete(`usage:${name}`);
       return;
@@ -179,7 +185,7 @@ async function readAll(env, { skipLoginToken = false } = {}) {
   const entries = await Promise.all(
     Object.entries(PROVIDERS).map(async ([name, p]) => {
       const relayMode = usesRelay(env, name);
-      let [connected, usage] = await Promise.all([p.isConnected(env.KV), getJson(env.KV, `usage:${name}`)]);
+      let [connected, usage] = await Promise.all([p.isConnected(env), getJson(env.KV, `usage:${name}`)]);
       // 중계 모드에선 Worker가 직접 조회하던 시절의 오래된 결과는 보여주지 않아요.
       if (relayMode && usage && usage.via !== "relay") usage = null;
       return [name, { connected, usage, relay: relayMode }];
@@ -200,7 +206,7 @@ async function readAll(env, { skipLoginToken = false } = {}) {
 // GITHUB_TOKEN(이 레포의 Actions 쓰기 권한만 있는 토큰)이 있으면 워크플로를 바로 실행해요.
 // 연타로 워크플로가 겹치지 않게 1분에 한 번까지만 실행해요.
 async function dispatchCodex(env) {
-  if (!usesRelay(env, "codex") || !(await codex.isConnected(env.KV))) return null;
+  if (!usesRelay(env, "codex") || !(await codex.isConnected(env))) return null;
   const token = (env.GITHUB_TOKEN || "").trim();
   if (!token) return { started: false, reason: "no_token" };
   const last = Number(await env.KV.get("dispatch:codex")) || 0;
@@ -251,13 +257,14 @@ async function widgetData(env, url) {
   // KV 쓰기 한도(하루 1,000회)를 넘지 않게 Claude는 5분, Codex는 10분 지난 경우에만 해요.
   // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. Codex 즉시 실행은 1분 제한이 따로 있어요.
   let codexRefreshing = false;
+  let codexDispatch = null;
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
     const [cu, xu] = await Promise.all([getJson(env.KV, "usage:claude"), getJson(env.KV, "usage:codex")]);
     const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
     const jobs = [];
     if (force || age(cu) >= 300) jobs.push(refreshOne(env, "claude"));
-    if (force || age(xu) >= 600) jobs.push(dispatchCodex(env).then((d) => { codexRefreshing = !!d?.started; }));
+    if (force || age(xu) >= 600) jobs.push(dispatchCodex(env).then((d) => { codexRefreshing = !!d?.started; codexDispatch = d; }));
     await Promise.all(jobs);
   }
 
@@ -266,9 +273,10 @@ async function widgetData(env, url) {
     connected: p.connected,
     ok: p.usage?.ok ?? null,
     fetched_at: p.usage?.fetched_at ?? null,
+    error_at: p.usage?.error_at ?? null,
     windows: (p.usage?.windows || []).map(({ label, used_percent, resets_at }) => ({ label, used_percent, resets_at })),
   });
-  return json({ claude: pick(all.claude), codex: { ...pick(all.codex), refreshing: codexRefreshing }, now: all.now });
+  return json({ claude: pick(all.claude), codex: { ...pick(all.codex), refreshing: codexRefreshing, dispatch: codexDispatch }, now: all.now });
 }
 
 // ---- GitHub Actions 중계 (Codex) ----
@@ -281,7 +289,7 @@ async function relay(request, env, pathname) {
   if (pathname === "/relay/codex/token" && request.method === "GET") {
     const force = new URL(request.url).searchParams.get("force") === "1";
     try {
-      const t = force ? await codex.forceRefresh(env.KV) : await codex.getAccessToken(env.KV);
+      const t = force ? await codex.forceRefresh(env) : await codex.getAccessToken(env);
       return json(t ? { connected: true, ...t } : { connected: false });
     } catch (err) {
       await saveRelayError(env, err.message, err instanceof AuthExpiredError);

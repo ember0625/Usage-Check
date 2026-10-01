@@ -347,7 +347,7 @@ function renderFoot(name, s) {
     }
   }
   if (s.usage && !u.ok && u.error) {
-    foot.append(el("span", { class: "err" }, u.needs_reconnect ? "로그인이 만료됐어요. 다시 연결해 주세요." : "갱신 실패: " + u.error));
+    foot.append(el("span", { class: "err" }, u.needs_reconnect ? "로그인이 만료됐어요. 다시 연결해 주세요. (" + u.error + ")" : "갱신 실패: " + u.error));
     if (name === "codex" && !s.relay) {
       foot.append(el("span", { class: "note" }, "Codex는 Cloudflare에서 직접 조회하면 막혀요. Worker에 Secret RELAY_SECRET을 등록하면 GitHub Actions 중계로 바뀌어요."));
     }
