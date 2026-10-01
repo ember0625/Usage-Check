@@ -1,0 +1,15 @@
+name = "usage-check"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# KV에 로그인 토큰과 마지막 사용량을 저장합니다.
+# id를 비워두면 첫 배포 때 Cloudflare가 자동으로 만들어 연결합니다.
+[[kv_namespaces]]
+binding = "KV"
+
+# 15분마다 사용량을 자동으로 갱신합니다.
+[triggers]
+crons = ["*/15 * * * *"]
+
+# 대시보드 비밀번호는 Cloudflare 대시보드에서 Secret으로 등록하세요.
+#   이름: DASHBOARD_PASSWORD
