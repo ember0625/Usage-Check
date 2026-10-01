@@ -218,6 +218,21 @@ async function widgetData(env, url) {
   const key = await env.KV.get("widget:key");
   const given = url.searchParams.get("key") || "";
   if (!key || !(await safeEqual(given, key))) return json({ error: "unauthorized" }, 401);
+
+  // 위젯이 다시 그려질 때 오래된 값이면 새로 조회해요.
+  // KV 쓰기 한도(하루 1,000회)를 넘지 않게 Claude는 5분, Codex는 10분 지난 경우에만 해요.
+  // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. Codex 즉시 실행은 1분 제한이 따로 있어요.
+  let codexRefreshing = false;
+  if (url.searchParams.get("refresh") === "1") {
+    const force = url.searchParams.get("force") === "1";
+    const [cu, xu] = await Promise.all([getJson(env.KV, "usage:claude"), getJson(env.KV, "usage:codex")]);
+    const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
+    const jobs = [];
+    if (force || age(cu) >= 300) jobs.push(refreshOne(env, "claude"));
+    if (force || age(xu) >= 600) jobs.push(dispatchCodex(env).then((d) => { codexRefreshing = !!d?.started; }));
+    await Promise.all(jobs);
+  }
+
   const all = await readAll(env, { skipLoginToken: true });
   const pick = (p) => ({
     connected: p.connected,
@@ -225,7 +240,7 @@ async function widgetData(env, url) {
     fetched_at: p.usage?.fetched_at ?? null,
     windows: (p.usage?.windows || []).map(({ label, used_percent, resets_at }) => ({ label, used_percent, resets_at })),
   });
-  return json({ claude: pick(all.claude), codex: pick(all.codex), now: all.now });
+  return json({ claude: pick(all.claude), codex: { ...pick(all.codex), refreshing: codexRefreshing }, now: all.now });
 }
 
 // ---- GitHub Actions 중계 (Codex) ----

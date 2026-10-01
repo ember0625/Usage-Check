@@ -5,8 +5,10 @@ export function widgetScript(origin, key) {
 // 대시보드: ${origin}/
 const API = ${JSON.stringify(`${origin}/api/widget?key=${key}`)};
 const DASHBOARD = ${JSON.stringify(`${origin}/`)};
-// 새로고침 아이콘: 대시보드를 열고 바로 새로 조회해요.
-const REFRESH = ${JSON.stringify(`${origin}/?refresh=1`)};
+// 새로고침 아이콘: 브라우저 대신 Scriptable에서 이 스크립트를 바로 실행해요.
+const REFRESH = "scriptable:///run/" + encodeURIComponent(Script.name()) + "?refresh=1";
+// 새로고침 버튼으로 실행됐는지 (앱 안에서 실행될 때만 true)
+const MANUAL = !config.runsInWidget && args.queryParameters && args.queryParameters.refresh === "1";
 
 const C = {
   bg: Color.dynamic(new Color("#ffffff"), new Color("#15171c")),
@@ -48,8 +50,9 @@ async function logo(name) {
 
 async function load() {
   try {
-    const r = new Request(API);
-    r.timeoutInterval = 15;
+    // 위젯이 다시 그려질 때마다 서버가 오래된 값을 새로 조회해요. 버튼으로 실행하면 간격 제한 없이 바로 조회해요.
+    const r = new Request(API + "&refresh=1" + (MANUAL ? "&force=1" : ""));
+    r.timeoutInterval = 20;
     const data = await r.loadJSON();
     if (data.error) return { error: data.error };
     return data;
@@ -145,6 +148,9 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
   if (p.ok === false) {
     col.addSpacer(4);
     addText(col, "갱신 실패", Font.systemFont(S.label - 2), C.bad);
+  } else if (p.refreshing && MANUAL) {
+    col.addSpacer(4);
+    addText(col, "약 1분 뒤 반영", Font.systemFont(S.label - 2), C.muted);
   }
 }
 
@@ -177,7 +183,8 @@ const S = SIZES[family] || SIZES.medium;
 const widget = new ListWidget();
 widget.backgroundColor = C.bg;
 widget.url = family === "small" ? REFRESH : DASHBOARD;
-widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
+// iOS에 5분 뒤 다시 그려 달라고 요청해요. 실제 시점은 iOS가 정해요.
+widget.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000);
 
 if (data.error) {
   widget.setPadding(14, 15, 12, 15);
