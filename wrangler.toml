@@ -20,9 +20,5 @@ new_sqlite_classes = ["TokenStore"]
 [triggers]
 crons = ["*/15 * * * *"]
 
-[vars]
-# 새로고침 때 Codex 중계 워크플로를 실행할 레포
-GITHUB_REPO = "ember0625/Usage-Check"
-
-# 대시보드 비밀번호는 Cloudflare 대시보드에서 Secret으로 등록하세요.
-#   이름: DASHBOARD_PASSWORD
+# 비밀값(DASHBOARD_PASSWORD, RELAY_SECRET, 선택: GITHUB_TOKEN)은 Cloudflare Secret으로 등록해요.
+# 목록은 .dev.vars.example에 있어요. README의 설치 방법을 참고하세요.
