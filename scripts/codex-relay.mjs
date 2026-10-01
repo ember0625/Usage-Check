@@ -22,9 +22,11 @@ if (!workerUrl || !secret) {
   process.exit(1);
 }
 const auth = { Authorization: `Bearer ${secret}` };
+// 새로고침 때 Worker가 이 레포의 워크플로를 실행할 수 있게 레포 이름을 알려줘요. (Actions가 자동으로 넣어주는 값)
+const repoHeader = process.env.GITHUB_REPOSITORY ? { "X-GitHub-Repository": process.env.GITHUB_REPOSITORY } : {};
 
 async function getToken(force) {
-  const res = await fetch(`${workerUrl}/relay/codex/token${force ? "?force=1" : ""}`, { headers: auth });
+  const res = await fetch(`${workerUrl}/relay/codex/token${force ? "?force=1" : ""}`, { headers: { ...auth, ...repoHeader } });
   const body = await res.json().catch(() => ({}));
   if (res.status === 401) throw new Error("Worker가 RELAY_SECRET을 거부했어요. Cloudflare와 GitHub의 RELAY_SECRET 값이 같은지 확인해 주세요.");
   if (res.status === 404 && /RELAY_SECRET/.test(body.error || "")) throw new Error("Cloudflare Worker에 RELAY_SECRET Secret이 없어요.");

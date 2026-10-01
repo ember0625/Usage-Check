@@ -1,0 +1,6 @@
+# 대시보드에 들어갈 때 쓰는 비밀번호예요. 길고 추측하기 어렵게 정해 주세요.
+DASHBOARD_PASSWORD=
+
+# GitHub Actions(Codex 조회 중계)와 이 사이트가 서로를 확인하는 비밀 문자열이에요.
+# 아무도 추측 못 할 긴 문자열로 정하고, GitHub 레포 Secret에도 똑같이 넣어 주세요.
+RELAY_SECRET=

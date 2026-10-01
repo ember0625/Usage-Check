@@ -212,7 +212,15 @@ async function dispatchCodex(env) {
   const last = Number(await env.KV.get("dispatch:codex")) || 0;
   if (now() - last < 60) return { started: false, reason: "recent", at: last };
 
-  const repo = env.GITHUB_REPO || "ember0625/Usage-Check";
+  // 레포 이름은 중계 워크플로가 처음 실행될 때 자동으로 저장돼요. 직접 정하고 싶으면 GITHUB_REPO 변수를 넣어요.
+  const repo = env.GITHUB_REPO || (await env.KV.get("github:repo"));
+  if (!repo) {
+    return {
+      started: false,
+      reason: "error",
+      error: "아직 레포 이름을 몰라요. GitHub → Actions → 'Codex 사용량 중계' → Run workflow를 한 번 실행해 주세요.",
+    };
+  }
   const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/codex-usage.yml/dispatches`, {
     method: "POST",
     headers: {
@@ -287,6 +295,12 @@ async function relay(request, env, pathname) {
   if (!(await safeEqual(auth.trim(), `Bearer ${env.RELAY_SECRET.trim()}`))) return json({ error: "unauthorized" }, 401);
 
   if (pathname === "/relay/codex/token" && request.method === "GET") {
+    // 중계 워크플로가 자기 레포 이름을 알려줘요. 새로고침 때 이 레포의 워크플로를 실행해요.
+    // (레포를 복사해 쓰는 사람마다 레포 이름이 달라서, 코드에 박아두지 않고 이렇게 알아내요.)
+    const repo = request.headers.get("X-GitHub-Repository") || "";
+    if (/^[\w.-]+\/[\w.-]+$/.test(repo) && repo !== (await env.KV.get("github:repo"))) {
+      await env.KV.put("github:repo", repo);
+    }
     const force = new URL(request.url).searchParams.get("force") === "1";
     try {
       const t = force ? await codex.forceRefresh(env) : await codex.getAccessToken(env);
