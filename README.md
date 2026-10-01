@@ -38,7 +38,7 @@ Cloudflare Workers(무료)에서 돌아가고, 15분마다 자동으로 갱신�
 4. 브라우저 메뉴의 **홈 화면에 추가**를 누르면 앱처럼 쓸 수 있어요.
 
 ### 4. Codex 조회를 GitHub Actions로 돌리기 (필수)
-chatgpt.com이 Cloudflare Worker에서 오는 요청을 막아서(HTTP 403), Codex 사용량은 GitHub Actions가 15분마다 대신 조회해 Worker에 올려요.
+chatgpt.com이 Cloudflare Worker에서 오는 요청을 막아서(HTTP 403), Codex 사용량은 GitHub Actions가 30분마다 대신 조회해 Worker에 올려요.
 
 1. 아무도 추측 못 할 긴 문자열을 하나 정해요 (예: 비밀번호 생성기로 만든 32자). 이게 `RELAY_SECRET`이에요.
 2. **Cloudflare**: Worker → Settings → Variables and Secrets → Add → Secret, 이름 `RELAY_SECRET`, 값은 위 문자열 → Deploy
@@ -49,6 +49,21 @@ chatgpt.com이 Cloudflare Worker에서 오는 요청을 막아서(HTTP 403), Cod
 
 > GitHub는 60일 동안 레포에 활동이 없으면 예약 실행을 멈춰요. 그러면 Actions 탭에서 다시 켜 주세요.
 
+### 5. 새로고침으로 Codex 바로 조회하기 (선택)
+대시보드의 **새로고침**을 누를 때 GitHub Actions를 바로 실행해요. 30초~1분 뒤 반영돼요.
+비공개 레포의 Actions 무료 시간(월 2,000분)을 아끼려고 2분에 한 번까지만 실행해요.
+
+1. GitHub → 오른쪽 위 프로필 → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**
+   - Token name: `usage-check`, Expiration: 원하는 기간
+   - Repository access: **Only select repositories** → `Usage-Check`
+   - Permissions → Repository permissions → **Actions: Read and write**
+   - **Generate token** → 토큰 복사
+2. Cloudflare Worker → Settings → Variables and Secrets → Add → Secret, 이름 `GITHUB_TOKEN`, 값은 복사한 토큰 → Deploy
+
+### 6. iOS 위젯 (선택)
+대시보드 맨 아래 **📱 iOS 위젯 만들기**를 열고 안내대로 하면 돼요. 무료 앱 [Scriptable](https://apps.apple.com/app/scriptable/id1405459188)을 써요.
+위젯은 iOS가 정하는 주기(보통 15분~1시간)로 저장된 값을 다시 읽어요. 위젯을 누르면 대시보드가 열려요.
+
 ## 구조
 
 ```
@@ -56,6 +71,7 @@ src/index.js   라우팅, 비밀번호 세션, 15분 크론
 src/claude.js  Claude OAuth(PKCE, 코드 붙여넣기) + /api/oauth/usage
 src/codex.js   Codex 기기 코드 로그인, 토큰 갱신
 src/page.js    휴대폰용 대시보드 화면
+src/widget.js  iOS 위젯(Scriptable) 스크립트
 scripts/codex-relay.mjs + .github/workflows/codex-usage.yml  Codex 조회 중계 (GitHub Actions)
 ```
 
