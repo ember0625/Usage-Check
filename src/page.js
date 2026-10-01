@@ -589,7 +589,7 @@ function shell(body, script = "") {
 </html>`;
 }
 
-const TITLE = `<div class="top-text"><h1>AI 사용량</h1><p class="subtitle">Claude 15분 · Codex 30분마다 자동 갱신</p></div>`;
+const TITLE = `<div class="top-text"><h1>AI 사용량</h1><p class="subtitle">Claude·Codex 15분마다 자동 갱신</p></div>`;
 
 export function renderPage({ authed, setupMissing }) {
   if (setupMissing) {

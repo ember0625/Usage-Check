@@ -170,13 +170,13 @@ async function readAll(env, { skipLoginToken = false } = {}) {
 // ---- 새로고침 시 Codex 중계 즉시 실행 ----
 
 // GITHUB_TOKEN(이 레포의 Actions 쓰기 권한만 있는 토큰)이 있으면 워크플로를 바로 실행해요.
-// Actions 무료 시간을 아끼려고 2분에 한 번까지만 실행해요.
+// 연타로 워크플로가 겹치지 않게 1분에 한 번까지만 실행해요.
 async function dispatchCodex(env) {
   if (!usesRelay(env, "codex") || !(await codex.isConnected(env.KV))) return null;
   const token = (env.GITHUB_TOKEN || "").trim();
   if (!token) return { started: false, reason: "no_token" };
   const last = Number(await env.KV.get("dispatch:codex")) || 0;
-  if (now() - last < 120) return { started: false, reason: "recent", at: last };
+  if (now() - last < 60) return { started: false, reason: "recent", at: last };
 
   const repo = env.GITHUB_REPO || "ember0625/Usage-Check";
   const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/codex-usage.yml/dispatches`, {
