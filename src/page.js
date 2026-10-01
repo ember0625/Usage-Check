@@ -29,6 +29,7 @@ h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .name { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; }
+.logo { width: 24px; height: 24px; border-radius: 6px; display: block; }
 .pill { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
 .win { margin: 14px 0; }
 .win-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -65,8 +66,8 @@ footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 1
 const SCRIPT = `
 const $ = (s) => document.querySelector(s);
 const PROVIDERS = {
-  claude: { title: "Claude", color: "var(--claude)" },
-  codex: { title: "Codex", color: "var(--codex)" },
+  claude: { title: "Claude", color: "var(--claude)", logo: "https://www.google.com/s2/favicons?domain=claude.ai&sz=128" },
+  codex: { title: "Codex", color: "var(--codex)", logo: "https://www.google.com/s2/favicons?domain=openai.com&sz=128" },
 };
 let state = null;
 
@@ -229,12 +230,19 @@ function connectForm(name, title) {
   return name === "claude" ? claudeForm(title) : codexForm(title);
 }
 
+function logoEl(meta) {
+  const img = el("img", { class: "logo", src: meta.logo, alt: "", referrerpolicy: "no-referrer" });
+  // 로고를 못 받아오면 색 점으로 대신해요.
+  img.addEventListener("error", () => img.replaceWith(el("span", { class: "dot", style: "background:" + meta.color })));
+  return img;
+}
+
 function renderCard(name) {
   const meta = PROVIDERS[name];
   const s = state[name];
   const card = el("section", { class: "card", id: "card-" + name });
   const head = el("div", { class: "card-head" },
-    el("div", { class: "name" }, el("span", { class: "dot", style: "background:" + meta.color }), meta.title));
+    el("div", { class: "name" }, logoEl(meta), meta.title));
   card.append(head);
 
   if (!s.connected) {
