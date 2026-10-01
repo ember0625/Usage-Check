@@ -22,10 +22,29 @@ const C = {
 
 // 위젯 크기별 글자·막대 크기
 const SIZES = {
-  small: { width: 118, name: 12, label: 11, pct: 13, bar: 5, rowGap: 5, remain: false, max: 2 },
+  small: { width: 120, name: 12, label: 10, pct: 12, bar: 4, rowGap: 4, remain: false, max: 2 },
   medium: { width: 138, name: 14, label: 12, pct: 16, bar: 7, rowGap: 9, remain: true, max: 2 },
   large: { width: 138, name: 15, label: 13, pct: 17, bar: 7, rowGap: 11, remain: true, max: 5 },
 };
+
+const LOGOS = {
+  claude: "https://www.google.com/s2/favicons?domain=claude.ai&sz=128",
+  codex: "https://www.google.com/s2/favicons?domain=openai.com&sz=128",
+};
+
+// 로고는 한 번 받아서 기기에 저장해 두고 다시 써요.
+async function logo(name) {
+  const fm = FileManager.local();
+  const path = fm.joinPath(fm.cacheDirectory(), "usage-check-logo-" + name + ".png");
+  if (fm.fileExists(path)) return fm.readImage(path);
+  try {
+    const img = await new Request(LOGOS[name]).loadImage();
+    fm.writeImage(path, img);
+    return img;
+  } catch (e) {
+    return null;
+  }
+}
 
 async function load() {
   try {
@@ -83,7 +102,7 @@ function addRow(parent, w, S) {
   top.addSpacer();
   const p = Math.max(0, Math.min(100, w.used_percent));
   addText(top, Math.round(w.used_percent) + "%", Font.boldRoundedSystemFont(S.pct), levelColor(p));
-  row.addSpacer(3);
+  row.addSpacer(S.remain ? 3 : 2);
   const bar = row.addStack();
   bar.size = new Size(S.width, S.bar);
   bar.backgroundColor = C.track;
@@ -98,14 +117,23 @@ function addRow(parent, w, S) {
   bar.addSpacer();
 }
 
-function addProvider(parent, name, color, p, S) {
+function addProvider(parent, name, color, icon, p, S, withRefresh) {
   const col = parent.addStack();
   col.layoutVertically();
   const h = col.addStack();
+  h.size = new Size(S.width, 0);
   h.centerAlignContent();
-  addText(h, "●", Font.systemFont(S.name - 4), color);
-  h.addSpacer(5);
+  if (icon) {
+    const img = h.addImage(icon);
+    img.imageSize = new Size(S.name + 4, S.name + 4);
+    img.cornerRadius = (S.name + 4) / 4.5;
+  } else {
+    addText(h, "●", Font.systemFont(S.name - 4), color);
+  }
+  h.addSpacer(6);
   addText(h, name, Font.boldSystemFont(S.name), C.text);
+  h.addSpacer();
+  if (withRefresh) addRefreshIcon(h, S, false);
   col.addSpacer(S.rowGap - 2);
   if (!p || !p.connected) return addText(col, "연결 안 됨", Font.systemFont(S.label), C.muted);
   const ws = (p.windows || []).slice(0, S.max);
@@ -128,45 +156,50 @@ function addFooter(parent, S, family) {
   df.dateFormat = "HH:mm";
   addText(f, df.string(new Date()) + " 기준", Font.systemFont(S.label - 2), C.muted);
   f.addSpacer();
-  const btn = f.addStack();
+  addRefreshIcon(f, S, true);
+}
+
+function addRefreshIcon(parent, S, tappable) {
+  const btn = parent.addStack();
   btn.centerAlignContent();
   // 작은 위젯은 iOS 제약으로 부분 터치가 안 돼서 위젯 전체가 새로고침 링크예요.
-  if (family !== "small") btn.url = REFRESH;
+  if (tappable) btn.url = REFRESH;
   const sym = SFSymbol.named("arrow.clockwise");
   sym.applyFont(Font.semiboldSystemFont(S.name));
   const img = btn.addImage(sym.image);
-  img.imageSize = new Size(S.name + 2, S.name + 2);
+  img.imageSize = new Size(S.name, S.name);
   img.tintColor = C.muted;
 }
 
-const data = await load();
+const [data, claudeLogo, codexLogo] = await Promise.all([load(), logo("claude"), logo("codex")]);
 const family = config.widgetFamily || "medium";
 const S = SIZES[family] || SIZES.medium;
 const widget = new ListWidget();
 widget.backgroundColor = C.bg;
 widget.url = family === "small" ? REFRESH : DASHBOARD;
 widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
-widget.setPadding(family === "small" ? 12 : 14, 15, family === "small" ? 10 : 12, 15);
 
 if (data.error) {
+  widget.setPadding(14, 15, 12, 15);
   addText(widget, "AI 사용량", Font.boldSystemFont(S.name), C.text);
   widget.addSpacer(6);
   addText(widget, data.error === "unauthorized" ? "위젯 키가 바뀌었어요. 스크립트를 다시 복사하세요." : "불러오기 실패", Font.systemFont(S.label), C.bad);
   widget.addSpacer();
   addFooter(widget, S, family);
 } else if (family === "small") {
-  addProvider(widget, "Claude", C.claude, data.claude, S);
+  // 작은 위젯은 세로 공간이 빠듯해서 시각 줄을 빼고 새로고침 아이콘을 Claude 줄 오른쪽에 둬요.
+  widget.setPadding(11, 13, 11, 13);
+  addProvider(widget, "Claude", C.claude, claudeLogo, data.claude, S, true);
   widget.addSpacer();
-  addProvider(widget, "Codex", C.codex, data.codex, S);
-  widget.addSpacer();
-  addFooter(widget, S, family);
+  addProvider(widget, "Codex", C.codex, codexLogo, data.codex, S, false);
 } else {
+  widget.setPadding(14, 15, 12, 15);
   const cols = widget.addStack();
   cols.layoutHorizontally();
   cols.topAlignContent();
-  addProvider(cols, "Claude", C.claude, data.claude, S);
+  addProvider(cols, "Claude", C.claude, claudeLogo, data.claude, S, false);
   cols.addSpacer();
-  addProvider(cols, "Codex", C.codex, data.codex, S);
+  addProvider(cols, "Codex", C.codex, codexLogo, data.codex, S, false);
   widget.addSpacer();
   addFooter(widget, S, family);
 }
