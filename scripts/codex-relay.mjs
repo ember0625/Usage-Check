@@ -3,8 +3,20 @@
 // 필요한 환경변수: WORKER_URL (예: https://usage-check.xxx.workers.dev), RELAY_SECRET
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
-const workerUrl = (process.env.WORKER_URL || "").replace(/\/+$/, "");
-const secret = process.env.RELAY_SECRET || "";
+// 휴대폰에서 붙여넣으면 공백·줄바꿈이 섞이거나 https://가 빠지기 쉬워서 정리해요.
+function cleanWorkerUrl(raw) {
+  let v = (raw || "").replace(/\s+/g, "");
+  if (!v) return "";
+  if (!/^https?:\/\//i.test(v)) v = `https://${v}`;
+  try {
+    return new URL(v).origin;
+  } catch {
+    console.error("WORKER_URL 형식이 이상해요. https://usage-check.xxx.workers.dev 처럼 넣어 주세요.");
+    process.exit(1);
+  }
+}
+const workerUrl = cleanWorkerUrl(process.env.WORKER_URL);
+const secret = (process.env.RELAY_SECRET || "").trim();
 if (!workerUrl || !secret) {
   console.error("WORKER_URL 또는 RELAY_SECRET이 설정되지 않았어요.");
   process.exit(1);
@@ -14,6 +26,8 @@ const auth = { Authorization: `Bearer ${secret}` };
 async function getToken(force) {
   const res = await fetch(`${workerUrl}/relay/codex/token${force ? "?force=1" : ""}`, { headers: auth });
   const body = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new Error("Worker가 RELAY_SECRET을 거부했어요. Cloudflare와 GitHub의 RELAY_SECRET 값이 같은지 확인해 주세요.");
+  if (res.status === 404 && /RELAY_SECRET/.test(body.error || "")) throw new Error("Cloudflare Worker에 RELAY_SECRET Secret이 없어요.");
   if (!res.ok) throw new Error(`Worker 토큰 요청 실패: HTTP ${res.status} ${body.error || ""}`);
   if (body.access_token) console.log(`::add-mask::${body.access_token}`);
   return body;

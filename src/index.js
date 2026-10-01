@@ -150,7 +150,7 @@ async function readAll(env) {
 async function relay(request, env, pathname) {
   if (!env.RELAY_SECRET) return json({ error: "RELAY_SECRET이 설정되지 않았어요." }, 404);
   const auth = request.headers.get("Authorization") || "";
-  if (!(await safeEqual(auth, `Bearer ${env.RELAY_SECRET}`))) return json({ error: "unauthorized" }, 401);
+  if (!(await safeEqual(auth.trim(), `Bearer ${env.RELAY_SECRET.trim()}`))) return json({ error: "unauthorized" }, 401);
 
   if (pathname === "/relay/codex/token" && request.method === "GET") {
     const force = new URL(request.url).searchParams.get("force") === "1";
