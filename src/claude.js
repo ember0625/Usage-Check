@@ -1,5 +1,6 @@
 // Claude (Pro/Max) 구독 한도 조회.
 // Claude Code CLI가 쓰는 OAuth 로그인과 /api/oauth/usage 엔드포인트를 그대로 사용합니다(비공식).
+import { tokenStore } from "./tokens.js";
 import { AuthExpiredError, getJson, pkce, putJson, randomToken, readError, toEpochSeconds } from "./util.js";
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -8,7 +9,6 @@ const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const SCOPE = "user:profile";
-const TOKENS_KEY = "claude:tokens";
 const PENDING_KEY = "claude:pending";
 
 const LABELS = {
@@ -19,10 +19,10 @@ const LABELS = {
   seven_day_oauth_apps: "주간 (연동 앱)",
 };
 
-export async function startLogin(kv) {
+export async function startLogin(env) {
   const { verifier, challenge } = await pkce();
   const state = randomToken(24);
-  await putJson(kv, PENDING_KEY, { verifier, state }, { expirationTtl: 900 });
+  await putJson(env.KV, PENDING_KEY, { verifier, state }, { expirationTtl: 900 });
   const url = new URL(AUTHORIZE_URL);
   url.search = new URLSearchParams({
     code: "true",
@@ -37,8 +37,8 @@ export async function startLogin(kv) {
   return { url: url.toString() };
 }
 
-export async function finishLogin(kv, pasted) {
-  const pending = await getJson(kv, PENDING_KEY);
+export async function finishLogin(env, pasted) {
+  const pending = await getJson(env.KV, PENDING_KEY);
   if (!pending) throw new Error("로그인 시간이 지났어요. 'Claude 로그인 열기'부터 다시 해주세요.");
   // 콜백 페이지는 "code#state" 형식으로 보여줍니다.
   const [code, state] = String(pasted || "").trim().split("#");
@@ -58,21 +58,20 @@ export async function finishLogin(kv, pasted) {
     }),
   });
   if (!res.ok) throw new Error(`토큰 교환 실패: ${await readError(res)}`);
-  await saveTokens(kv, await res.json());
-  await kv.delete(PENDING_KEY);
+  await tokenStore(env).put("claude", tokensFromResponse(await res.json()));
+  await env.KV.delete(PENDING_KEY);
 }
 
-async function saveTokens(kv, data, previous) {
-  const tokens = {
+function tokensFromResponse(data, previous) {
+  return {
     access_token: data.access_token,
     refresh_token: data.refresh_token || previous?.refresh_token,
     expires_at: Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
   };
-  await putJson(kv, TOKENS_KEY, tokens);
-  return tokens;
 }
 
-async function refresh(kv, tokens) {
+/** refresh token으로 새 토큰을 받아요. 저장과 순서 관리는 TokenStore가 해요. */
+export async function refreshTokens(tokens) {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -85,15 +84,15 @@ async function refresh(kv, tokens) {
   });
   if (res.status === 400 || res.status === 401) throw new AuthExpiredError(`토큰 갱신 실패: ${await readError(res)}`);
   if (!res.ok) throw new Error(`토큰 갱신 실패: ${await readError(res)}`);
-  return saveTokens(kv, await res.json(), tokens);
+  return tokensFromResponse(await res.json(), tokens);
 }
 
-export async function isConnected(kv) {
-  return !!(await kv.get(TOKENS_KEY));
+export async function isConnected(env) {
+  return !!(await tokenStore(env).get("claude"));
 }
 
-export async function disconnect(kv) {
-  await kv.delete(TOKENS_KEY);
+export async function disconnect(env) {
+  await tokenStore(env).remove("claude");
 }
 
 /**
@@ -125,10 +124,10 @@ export async function diagnose() {
   ]);
 }
 
-export async function fetchUsage(kv) {
-  let tokens = await getJson(kv, TOKENS_KEY);
+export async function fetchUsage(env) {
+  const store = tokenStore(env);
+  let tokens = await store.fresh("claude");
   if (!tokens) return null;
-  if (tokens.expires_at - 300 < Date.now() / 1000) tokens = await refresh(kv, tokens);
 
   const call = (t) =>
     fetch(USAGE_URL, {
@@ -140,10 +139,11 @@ export async function fetchUsage(kv) {
     });
   let res = await call(tokens);
   if (res.status === 401) {
-    tokens = await refresh(kv, tokens);
+    tokens = await store.fresh("claude", { force: true, failedAccess: tokens.access_token });
     res = await call(tokens);
   }
-  if (res.status === 401 || res.status === 403) throw new AuthExpiredError(`사용량 조회 거부: ${await readError(res)}`);
+  // 401만 로그인 만료로 봐요. 403은 Anthropic 쪽 일시적 거부일 수 있어서 다음 갱신 때 다시 시도해요.
+  if (res.status === 401) throw new AuthExpiredError(`사용량 조회 거부: ${await readError(res)}`);
   if (!res.ok) throw new Error(`사용량 조회 실패: ${await readError(res)}`);
   return normalize(await res.json());
 }

@@ -1,15 +1,15 @@
 // Codex (ChatGPT 구독) 한도 조회.
 // Codex CLI의 기기 코드 로그인과 /backend-api/wham/usage 엔드포인트를 그대로 사용합니다(비공식).
+import { tokenStore } from "./tokens.js";
 import { AuthExpiredError, decodeJwt, getJson, putJson, readError, toEpochSeconds } from "./util.js";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = "https://auth.openai.com";
 const VERIFY_URL = `${ISSUER}/codex/device`;
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
-const TOKENS_KEY = "codex:tokens";
 const PENDING_KEY = "codex:pending";
 
-export async function startLogin(kv) {
+export async function startLogin(env) {
   const res = await fetch(`${ISSUER}/api/accounts/deviceauth/usercode`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -22,13 +22,13 @@ export async function startLogin(kv) {
     user_code: data.user_code || data.usercode,
     interval: Number(data.interval) || 5,
   };
-  await putJson(kv, PENDING_KEY, pending, { expirationTtl: 900 });
+  await putJson(env.KV, PENDING_KEY, pending, { expirationTtl: 900 });
   return { url: VERIFY_URL, user_code: pending.user_code, interval: pending.interval };
 }
 
 /** 한 번 확인합니다. 아직 승인 전이면 { pending: true }. */
-export async function pollLogin(kv) {
-  const pending = await getJson(kv, PENDING_KEY);
+export async function pollLogin(env) {
+  const pending = await getJson(env.KV, PENDING_KEY);
   if (!pending) throw new Error("로그인 시간이 지났어요. 다시 시작해 주세요.");
   const res = await fetch(`${ISSUER}/api/accounts/deviceauth/token`, {
     method: "POST",
@@ -51,12 +51,12 @@ export async function pollLogin(kv) {
     }),
   });
   if (!tokenRes.ok) throw new Error(`토큰 교환 실패: ${await readError(tokenRes)}`);
-  await saveTokens(kv, await tokenRes.json());
-  await kv.delete(PENDING_KEY);
+  await tokenStore(env).put("codex", tokensFromResponse(await tokenRes.json()));
+  await env.KV.delete(PENDING_KEY);
   return { pending: false };
 }
 
-async function saveTokens(kv, data, previous) {
+function tokensFromResponse(data, previous) {
   const idToken = data.id_token || previous?.id_token;
   const claims = decodeJwt(idToken) || {};
   const access = decodeJwt(data.access_token) || {};
@@ -67,11 +67,11 @@ async function saveTokens(kv, data, previous) {
     account_id: claims["https://api.openai.com/auth"]?.chatgpt_account_id || previous?.account_id,
     expires_at: access.exp || Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
   };
-  await putJson(kv, TOKENS_KEY, tokens);
   return tokens;
 }
 
-async function refresh(kv, tokens) {
+/** refresh token으로 새 토큰을 받아요. 저장과 순서 관리는 TokenStore가 해요. */
+export async function refreshTokens(tokens) {
   const res = await fetch(`${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -83,38 +83,37 @@ async function refresh(kv, tokens) {
   });
   if (res.status === 400 || res.status === 401) throw new AuthExpiredError(`토큰 갱신 실패: ${await readError(res)}`);
   if (!res.ok) throw new Error(`토큰 갱신 실패: ${await readError(res)}`);
-  return saveTokens(kv, await res.json(), tokens);
+  return tokensFromResponse(await res.json(), tokens);
 }
 
-export async function isConnected(kv) {
-  return !!(await kv.get(TOKENS_KEY));
+export async function isConnected(env) {
+  return !!(await tokenStore(env).get("codex"));
 }
 
-export async function disconnect(kv) {
-  await kv.delete(TOKENS_KEY);
+export async function disconnect(env) {
+  await tokenStore(env).remove("codex");
 }
 
 /** 만료가 가까우면 갱신해서 유효한 토큰을 돌려줘요. 연결 안 됐으면 null. */
-export async function getAccessToken(kv) {
-  let tokens = await getJson(kv, TOKENS_KEY);
+export async function getAccessToken(env) {
+  const tokens = await tokenStore(env).fresh("codex");
   if (!tokens) return null;
-  if (tokens.expires_at - 600 < Date.now() / 1000) tokens = await refresh(kv, tokens);
   return { access_token: tokens.access_token, account_id: tokens.account_id || null };
 }
 
-export async function forceRefresh(kv) {
-  const tokens = await getJson(kv, TOKENS_KEY);
+/** 사용량 서버가 토큰을 거부했을 때 갱신해요. */
+export async function forceRefresh(env) {
+  const tokens = await tokenStore(env).fresh("codex", { force: true });
   if (!tokens) return null;
-  const t = await refresh(kv, tokens);
-  return { access_token: t.access_token, account_id: t.account_id || null };
+  return { access_token: tokens.access_token, account_id: tokens.account_id || null };
 }
 
 /**
  * Worker에서 직접 조회해요. chatgpt.com이 Cloudflare Worker에서 오는 요청을 막는 경우가 있어서,
  * 그럴 땐 GitHub Actions 중계(scripts/codex-relay.mjs)를 써요.
  */
-export async function fetchUsage(kv) {
-  const t = await getAccessToken(kv);
+export async function fetchUsage(env) {
+  const t = await getAccessToken(env);
   if (!t) return null;
   const headers = { Authorization: `Bearer ${t.access_token}`, "User-Agent": "codex-cli", Accept: "application/json" };
   if (t.account_id) headers["ChatGPT-Account-Id"] = t.account_id;
