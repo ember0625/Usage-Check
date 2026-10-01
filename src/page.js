@@ -47,6 +47,7 @@ h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.025em; lin
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 20px 20px 14px; }
 .card-head { display: flex; align-items: center; gap: 10px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.logo { width: 24px; height: 24px; border-radius: 7px; flex: none; display: block; }
 h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.02em; flex: 1; }
 .badge { font-size: 12px; color: var(--muted); border: 1px solid var(--line2); border-radius: 999px; padding: 3px 9px; line-height: 1.2; }
 
@@ -133,8 +134,8 @@ textarea:focus, input:focus { border-color: rgba(255,255,255,.28); }
 const SCRIPT = `
 const $ = (s) => document.querySelector(s);
 const PROVIDERS = {
-  claude: { title: "Claude", color: "var(--claude)" },
-  codex: { title: "Codex", color: "var(--codex)" },
+  claude: { title: "Claude", color: "var(--claude)", logo: "https://www.google.com/s2/favicons?domain=claude.ai&sz=128" },
+  codex: { title: "Codex", color: "var(--codex)", logo: "https://www.google.com/s2/favicons?domain=openai.com&sz=128" },
 };
 let state = null;
 
@@ -374,13 +375,20 @@ function renderFoot(name, s) {
   return foot;
 }
 
+function logoEl(meta) {
+  const img = el("img", { class: "logo", src: meta.logo, alt: "", referrerpolicy: "no-referrer" });
+  // 로고를 못 받아오면 디자인 시안의 색 점으로 대신해요.
+  img.addEventListener("error", () => img.replaceWith(el("span", { class: "dot", style: "background:" + meta.color })));
+  return img;
+}
+
 function renderCard(name) {
   const meta = PROVIDERS[name];
   const s = state[name];
   const u = s.usage;
   const card = el("section", { class: "card" },
     el("div", { class: "card-head" },
-      el("span", { class: "dot", style: "background:" + meta.color }),
+      logoEl(meta),
       el("h2", {}, meta.title),
       u && u.plan ? el("span", { class: "badge" }, u.plan) : null));
 
