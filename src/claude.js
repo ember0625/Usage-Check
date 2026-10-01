@@ -96,6 +96,35 @@ export async function disconnect(kv) {
   await kv.delete(TOKENS_KEY);
 }
 
+/**
+ * 진단용: 일부러 틀린 값으로 요청해서 서버가 어떻게 답하는지 봐요.
+ * 400/401이면 요청은 정상적으로 처리된 것이고, 403이면 이 서버에서 오는 요청 자체가 막힌 거예요.
+ */
+export async function diagnose() {
+  const probe = async (name, url, init) => {
+    try {
+      const res = await fetch(url, init);
+      const text = (await res.text().catch(() => "")).trim();
+      return { name, status: res.status, body: text.startsWith("<") ? "(HTML 응답)" : text.slice(0, 300) };
+    } catch (err) {
+      return { name, status: null, body: String(err) };
+    }
+  };
+  const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return Promise.all([
+    probe("토큰 교환 (틀린 코드)", TOKEN_URL, json({
+      grant_type: "authorization_code", code: "diagnostic", redirect_uri: REDIRECT_URI,
+      client_id: CLIENT_ID, code_verifier: "diagnostic", state: "diagnostic",
+    })),
+    probe("토큰 갱신 (틀린 토큰)", TOKEN_URL, json({
+      grant_type: "refresh_token", refresh_token: "diagnostic", client_id: CLIENT_ID, scope: SCOPE,
+    })),
+    probe("사용량 조회 (틀린 토큰)", USAGE_URL, {
+      headers: { Authorization: "Bearer diagnostic", "anthropic-beta": "oauth-2025-04-20" },
+    }),
+  ]);
+}
+
 export async function fetchUsage(kv) {
   let tokens = await getJson(kv, TOKENS_KEY);
   if (!tokens) return null;
