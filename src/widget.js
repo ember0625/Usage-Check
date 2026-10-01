@@ -10,23 +10,25 @@ const REFRESH = "scriptable:///run/" + encodeURIComponent(Script.name()) + "?ref
 // 새로고침 버튼으로 실행됐는지 (앱 안에서 실행될 때만 true)
 const MANUAL = !config.runsInWidget && args.queryParameters && args.queryParameters.refresh === "1";
 
+// 대시보드와 같은 색이에요 (다크 테마 전용, Claude Design 시안 기준).
 const C = {
-  bg: Color.dynamic(new Color("#ffffff"), new Color("#15171c")),
-  text: Color.dynamic(new Color("#16181d"), new Color("#eef0f4")),
-  muted: Color.dynamic(new Color("#6b7280"), new Color("#9aa1ae")),
-  track: Color.dynamic(new Color("#e5e7eb"), new Color("#2a2e37")),
-  ok: new Color("#22c55e"),
-  warn: new Color("#f59e0b"),
-  bad: new Color("#ef4444"),
-  claude: new Color("#d97757"),
-  codex: new Color("#10a37f"),
+  bg: new Color("#15171B"),      // 대시보드 카드 배경
+  text: new Color("#ECEDEF"),    // 제목
+  label: new Color("#C9CBD1"),   // 항목 이름 (5시간, 주간)
+  muted: new Color("#9A9DA5"),   // 남은 시간, 시각
+  track: new Color("#24272D"),   // 막대 바탕
+  ok: new Color("#3DD68C"),
+  warn: new Color("#F2B544"),
+  bad: new Color("#F06B5F"),
+  claude: new Color("#D97757"),
+  codex: new Color("#2DC8A8"),
 };
 
 // 위젯 크기별 글자·막대 크기
 const SIZES = {
-  small: { width: 120, name: 12, label: 10, pct: 12, bar: 4, rowGap: 4, remain: false, max: 2 },
-  medium: { width: 138, name: 14, label: 12, pct: 16, bar: 7, rowGap: 9, remain: true, max: 2 },
-  large: { width: 138, name: 15, label: 13, pct: 17, bar: 7, rowGap: 11, remain: true, max: 5 },
+  small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4, remain: false, max: 2 },
+  medium: { width: 138, name: 14, label: 12, pct: 18, bar: 6, rowGap: 9, remain: true, max: 2 },
+  large: { width: 138, name: 15, label: 13, pct: 20, bar: 6, rowGap: 11, remain: true, max: 5 },
 };
 
 const LOGOS = {
@@ -61,8 +63,9 @@ async function load(query = "&refresh=1" + (MANUAL ? "&force=1" : "")) {
   }
 }
 
+// 대시보드와 같은 기준: 50% 이상 노랑, 80% 이상 빨강
 function levelColor(p) {
-  return p >= 90 ? C.bad : p >= 70 ? C.warn : C.ok;
+  return p >= 80 ? C.bad : p >= 50 ? C.warn : C.ok;
 }
 
 function shortLabel(label) {
@@ -96,15 +99,18 @@ function addRow(parent, w, S) {
   top.size = new Size(S.width, 0);
   top.layoutHorizontally();
   top.bottomAlignContent();
-  addText(top, shortLabel(w.label), Font.mediumSystemFont(S.label), C.text);
+  addText(top, shortLabel(w.label), Font.mediumSystemFont(S.label), C.label);
   if (S.remain) {
     top.addSpacer(4);
     const r = addText(top, remain(w.resets_at), Font.systemFont(S.label - 2), C.muted);
     r.minimumScaleFactor = 0.8;
   }
   top.addSpacer();
+  // 대시보드처럼 숫자는 크게, %는 작게
   const p = Math.max(0, Math.min(100, w.used_percent));
-  addText(top, Math.round(w.used_percent) + "%", Font.boldRoundedSystemFont(S.pct), levelColor(p));
+  const color = levelColor(p);
+  addText(top, String(Math.round(w.used_percent)), Font.semiboldSystemFont(S.pct), color);
+  addText(top, "%", Font.semiboldSystemFont(Math.round(S.pct * 0.55)), color);
   row.addSpacer(S.remain ? 3 : 2);
   const bar = row.addStack();
   bar.size = new Size(S.width, S.bar);
@@ -113,8 +119,9 @@ function addRow(parent, w, S) {
   bar.layoutHorizontally();
   if (p > 0) {
     const fill = bar.addStack();
-    fill.size = new Size(Math.max(S.bar, (S.width * p) / 100), S.bar);
-    fill.backgroundColor = levelColor(p);
+    // 대시보드처럼 아주 작은 값도 최소 6pt는 보이게 해요.
+    fill.size = new Size(Math.max(6, (S.width * p) / 100), S.bar);
+    fill.backgroundColor = color;
     fill.cornerRadius = S.bar / 2;
   }
   bar.addSpacer();
