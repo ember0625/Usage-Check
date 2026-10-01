@@ -138,6 +138,96 @@ function tickResets() {
   });
 }
 
+// 연결 진행 상태. 화면을 다시 그려도 입력값과 진행 상황이 유지되도록 여기에 보관해요.
+const flows = { claudeDraft: "", claudeMsg: "", claudeBusy: false, codex: null };
+
+function claudeForm(title) {
+  const input = el("textarea", { rows: "3", placeholder: "여기에 코드를 붙여넣기" });
+  input.value = flows.claudeDraft;
+  input.addEventListener("input", () => { flows.claudeDraft = input.value; });
+  const submit = el("button", { onclick: () => finishClaude() }, "연결 완료");
+  if (flows.claudeBusy) submit.disabled = true;
+  return el("div", {},
+    el("p", { class: "msg" }, title),
+    el("ol", {},
+      el("li", {}, "'Claude 로그인 열기'를 눌러 새 탭에서 로그인하고 승인하세요."),
+      el("li", {}, "화면에 나오는 코드를 복사하세요."),
+      el("li", {}, "이 탭으로 돌아와 아래 칸에 붙여넣고 '연결 완료'를 누르세요.")),
+    el("div", { class: "row" }, el("a", { class: "btn", href: (state.claude && state.claude.login_url) || "/claude/login", target: "_blank", rel: "noopener" }, "Claude 로그인 열기")),
+    el("div", { class: "row" }, input),
+    el("div", { class: "row" }, submit),
+    flows.claudeMsg ? el("div", { class: "err" }, flows.claudeMsg) : null);
+}
+
+async function finishClaude() {
+  const code = flows.claudeDraft.trim();
+  if (!code) { flows.claudeMsg = "코드를 붙여넣어 주세요."; render(); return; }
+  flows.claudeBusy = true; flows.claudeMsg = ""; render();
+  try {
+    await api("/api/claude/finish", { method: "POST", body: JSON.stringify({ code }) });
+    flows.claudeDraft = "";
+    flows.claudeBusy = false;
+    await new Promise((r) => setTimeout(r, 1500));
+    await load(false);
+  } catch (e) {
+    flows.claudeBusy = false;
+    flows.claudeMsg = e.message;
+    render();
+  }
+}
+
+function codexForm(title) {
+  const f = flows.codex;
+  if (!f) {
+    return el("div", {},
+      el("p", { class: "msg" }, title),
+      el("div", { class: "row" }, el("button", { onclick: () => startCodex() }, "Codex 연결하기")));
+  }
+  return el("div", {},
+    el("ol", {},
+      el("li", {}, "아래 코드를 복사하세요."),
+      el("li", {}, "버튼으로 OpenAI 페이지를 열고 로그인한 뒤 코드를 입력하세요."),
+      el("li", {}, "승인이 끝나면 이 화면이 자동으로 바뀌어요.")),
+    f.user_code ? el("div", { class: "code" }, f.user_code) : null,
+    f.url ? el("div", { class: "row" }, el("a", { class: "btn", href: f.url, target: "_blank", rel: "noopener" }, "OpenAI 로그인 열기")) : null,
+    el("p", { class: f.error ? "err" : "msg" }, f.error || f.status),
+    f.error ? el("div", { class: "row" }, el("button", { onclick: () => startCodex() }, "다시 시도")) : null);
+}
+
+async function startCodex() {
+  flows.codex = { status: "준비 중…" };
+  render();
+  try {
+    const r = await api("/api/codex/start", { method: "POST", body: "{}" });
+    flows.codex = { ...r, status: "승인을 기다리는 중…", started: Date.now() };
+    render();
+    setTimeout(pollCodex, 5000);
+  } catch (e) {
+    flows.codex = { error: e.message };
+    render();
+  }
+}
+
+async function pollCodex() {
+  const f = flows.codex;
+  if (!f || f.error || !f.started) return;
+  if (Date.now() - f.started > 15 * 60 * 1000) { f.error = "시간이 지났어요. 다시 시도해 주세요."; render(); return; }
+  try {
+    const p = await api("/api/codex/poll", { method: "POST", body: "{}" });
+    if (!p.pending) {
+      flows.codex = null;
+      await new Promise((r) => setTimeout(r, 1500));
+      await load(false);
+      return;
+    }
+  } catch (e) { f.error = e.message; render(); return; }
+  setTimeout(pollCodex, Math.max(3, f.interval || 5) * 1000);
+}
+
+function connectForm(name, title) {
+  return name === "claude" ? claudeForm(title) : codexForm(title);
+}
+
 function renderCard(name) {
   const meta = PROVIDERS[name];
   const s = state[name];
@@ -147,34 +237,36 @@ function renderCard(name) {
   card.append(head);
 
   if (!s.connected) {
-    card.append(el("p", { class: "msg" }, "아직 연결되지 않았어요."),
-      el("div", { class: "row" }, el("button", { onclick: () => connect(name) }, meta.title + " 연결하기")));
-    card.append(el("div", { id: "flow-" + name }));
+    card.append(connectForm(name, "아직 연결되지 않았어요."));
     return card;
   }
 
   const u = s.usage;
   if (u && u.plan) head.append(el("span", { class: "pill" }, u.plan));
   if (!u) {
-    card.append(el("p", { class: "msg" }, "아직 데이터가 없어요. 새로고침을 눌러보세요."));
+    card.append(el("p", { class: "msg" }, s.relay
+      ? "GitHub Actions의 첫 조회를 기다리는 중이에요. 최대 15~20분 걸릴 수 있어요."
+      : "아직 데이터가 없어요. 새로고침을 눌러보세요."));
   } else {
     if (u.windows && u.windows.length) u.windows.forEach((w) => card.append(renderWindow(w)));
-    else card.append(el("p", { class: "msg" }, "한도 정보가 응답에 없어요. 아래 원본 응답을 확인해 주세요."));
-    if (u.fetched_at) card.append(el("div", { class: "sub" }, "마지막 성공: " + ago(u.fetched_at)));
+    else card.append(el("p", { class: "msg" }, "한도 정보가 없어요."));
+    if (u.fetched_at) card.append(el("div", { class: "sub" }, "마지막 성공: " + ago(u.fetched_at) + (s.relay ? " · GitHub Actions로 갱신" : "")));
     if (!u.ok) {
-      card.append(el("div", { class: "err" }, (u.needs_reconnect ? "로그인이 만료됐어요. 다시 연결해 주세요. " : "갱신 실패: ") + u.error));
-      if (u.needs_reconnect) card.append(el("div", { class: "row" }, el("button", { onclick: () => connect(name) }, "다시 연결")));
+      if (u.needs_reconnect) card.append(el("div", { class: "err" }, "로그인이 만료됐어요. 다시 연결해 주세요."), connectForm(name, ""));
+      else card.append(el("div", { class: "err" }, "갱신 실패: " + u.error));
     }
     if (u.raw) card.append(el("details", {}, el("summary", {}, "원본 응답"), el("pre", {}, JSON.stringify(u.raw, null, 2))));
   }
-  card.append(el("div", { id: "flow-" + name }));
   card.append(el("div", { class: "row" }, el("button", { class: "ghost", onclick: () => disconnect(name) }, "연결 해제")));
   return card;
 }
 
 function render() {
-  const root = $("#cards");
-  root.replaceChildren(...Object.keys(PROVIDERS).map(renderCard));
+  if (!state) return;
+  const active = document.activeElement;
+  const wasTyping = active && active.tagName === "TEXTAREA";
+  $("#cards").replaceChildren(...Object.keys(PROVIDERS).map(renderCard));
+  if (wasTyping) { const t = document.querySelector("textarea"); if (t) t.focus(); }
   tickResets();
 }
 
@@ -197,61 +289,6 @@ async function disconnect(name) {
   load(false);
 }
 
-async function connect(name) {
-  const box = $("#flow-" + name);
-  box.replaceChildren(el("p", { class: "msg" }, "준비 중…"));
-  try {
-    const r = await api("/api/" + name + "/start", { method: "POST", body: "{}" });
-    if (name === "claude") claudeFlow(box, r); else codexFlow(box, r);
-  } catch (e) {
-    box.replaceChildren(el("div", { class: "err" }, e.message));
-  }
-}
-
-function claudeFlow(box, r) {
-  const input = el("textarea", { rows: "3", placeholder: "여기에 코드를 붙여넣기" });
-  const err = el("div", { class: "err" });
-  const submit = el("button", { onclick: async () => {
-    submit.disabled = true; err.textContent = "";
-    try {
-      await api("/api/claude/finish", { method: "POST", body: JSON.stringify({ code: input.value }) });
-      setTimeout(() => load(false), 1500);
-    } catch (e) { err.textContent = e.message; submit.disabled = false; }
-  } }, "연결 완료");
-  box.replaceChildren(
-    el("ol", {},
-      el("li", {}, "아래 버튼으로 Claude 로그인 페이지를 열고 승인하세요."),
-      el("li", {}, "화면에 나오는 코드를 복사하세요."),
-      el("li", {}, "이 화면으로 돌아와 붙여넣고 '연결 완료'를 누르세요.")),
-    el("div", { class: "row" }, el("a", { class: "btn", href: r.url, target: "_blank", rel: "noopener" }, "Claude 로그인 열기")),
-    el("div", { class: "row" }, input),
-    el("div", { class: "row" }, submit),
-    err);
-}
-
-function codexFlow(box, r) {
-  const status = el("p", { class: "msg" }, "승인을 기다리는 중…");
-  box.replaceChildren(
-    el("ol", {},
-      el("li", {}, "아래 코드를 복사하세요."),
-      el("li", {}, "버튼으로 OpenAI 페이지를 열고 로그인한 뒤 코드를 입력하세요."),
-      el("li", {}, "승인이 끝나면 이 화면이 자동으로 바뀌어요.")),
-    el("div", { class: "code" }, r.user_code),
-    el("div", { class: "row" }, el("a", { class: "btn", href: r.url, target: "_blank", rel: "noopener" }, "OpenAI 로그인 열기")),
-    status);
-  const started = Date.now();
-  const poll = async () => {
-    if (!document.body.contains(status)) return;
-    if (Date.now() - started > 15 * 60 * 1000) { status.textContent = "시간이 지났어요. 다시 연결해 주세요."; return; }
-    try {
-      const p = await api("/api/codex/poll", { method: "POST", body: "{}" });
-      if (!p.pending) { status.textContent = "연결됐어요!"; setTimeout(() => load(false), 1500); return; }
-    } catch (e) { status.className = "err"; status.textContent = e.message; return; }
-    setTimeout(poll, Math.max(3, r.interval || 5) * 1000);
-  };
-  setTimeout(poll, 5000);
-}
-
 async function logout() {
   await api("/api/logout", { method: "POST", body: "{}" });
   location.reload();
@@ -259,7 +296,8 @@ async function logout() {
 
 $("#refresh").addEventListener("click", () => load(true));
 $("#logout").addEventListener("click", logout);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) load(false); });
+// 다른 탭에서 돌아왔을 때 숫자만 새로 받아와요. 입력 중인 코드와 진행 상태는 flows에 남아 있어요.
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !flows.claudeBusy) load(false); });
 setInterval(tickResets, 30000);
 load(false);
 `;

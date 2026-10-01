@@ -39,11 +39,11 @@ export async function startLogin(kv) {
 
 export async function finishLogin(kv, pasted) {
   const pending = await getJson(kv, PENDING_KEY);
-  if (!pending) throw new Error("로그인 시간이 지났어요. 다시 시작해 주세요.");
+  if (!pending) throw new Error("로그인 시간이 지났어요. 'Claude 로그인 열기'부터 다시 해주세요.");
   // 콜백 페이지는 "code#state" 형식으로 보여줍니다.
   const [code, state] = String(pasted || "").trim().split("#");
   if (!code) throw new Error("코드를 붙여넣어 주세요.");
-  if (state && state !== pending.state) throw new Error("코드가 이번 로그인 요청과 맞지 않아요. 다시 시작해 주세요.");
+  if (state && state !== pending.state) throw new Error("코드가 가장 최근 로그인 요청과 맞지 않아요. 'Claude 로그인 열기'부터 다시 해주세요.");
 
   const res = await fetch(TOKEN_URL, {
     method: "POST",

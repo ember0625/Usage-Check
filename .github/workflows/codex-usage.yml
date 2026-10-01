@@ -1,0 +1,28 @@
+name: Codex 사용량 중계
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codex-usage
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/codex-relay.mjs
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          RELAY_SECRET: ${{ secrets.RELAY_SECRET }}

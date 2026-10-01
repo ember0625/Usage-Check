@@ -94,25 +94,31 @@ export async function disconnect(kv) {
   await kv.delete(TOKENS_KEY);
 }
 
-export async function fetchUsage(kv) {
+/** 만료가 가까우면 갱신해서 유효한 토큰을 돌려줘요. 연결 안 됐으면 null. */
+export async function getAccessToken(kv) {
   let tokens = await getJson(kv, TOKENS_KEY);
   if (!tokens) return null;
-  if (tokens.expires_at - 300 < Date.now() / 1000) tokens = await refresh(kv, tokens);
+  if (tokens.expires_at - 600 < Date.now() / 1000) tokens = await refresh(kv, tokens);
+  return { access_token: tokens.access_token, account_id: tokens.account_id || null };
+}
 
-  const call = (t) => {
-    const headers = {
-      Authorization: `Bearer ${t.access_token}`,
-      "User-Agent": "codex-cli",
-      Accept: "application/json",
-    };
-    if (t.account_id) headers["ChatGPT-Account-Id"] = t.account_id;
-    return fetch(USAGE_URL, { headers });
-  };
-  let res = await call(tokens);
-  if (res.status === 401) {
-    tokens = await refresh(kv, tokens);
-    res = await call(tokens);
-  }
+export async function forceRefresh(kv) {
+  const tokens = await getJson(kv, TOKENS_KEY);
+  if (!tokens) return null;
+  const t = await refresh(kv, tokens);
+  return { access_token: t.access_token, account_id: t.account_id || null };
+}
+
+/**
+ * Worker에서 직접 조회해요. chatgpt.com이 Cloudflare Worker에서 오는 요청을 막는 경우가 있어서,
+ * 그럴 땐 GitHub Actions 중계(scripts/codex-relay.mjs)를 써요.
+ */
+export async function fetchUsage(kv) {
+  const t = await getAccessToken(kv);
+  if (!t) return null;
+  const headers = { Authorization: `Bearer ${t.access_token}`, "User-Agent": "codex-cli", Accept: "application/json" };
+  if (t.account_id) headers["ChatGPT-Account-Id"] = t.account_id;
+  const res = await fetch(USAGE_URL, { headers });
   if (res.status === 401) throw new AuthExpiredError(`사용량 조회 거부: ${await readError(res)}`);
   if (!res.ok) throw new Error(`사용량 조회 실패: ${await readError(res)}`);
   return normalize(await res.json());
@@ -141,7 +147,7 @@ function toWindow(w, id, fallback, prefix = "") {
   };
 }
 
-function normalize(raw) {
+export function normalize(raw) {
   const windows = [];
   const push = (rl, id, prefix) => {
     if (!rl) return;

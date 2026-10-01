@@ -37,13 +37,26 @@ Cloudflare Workers(무료)에서 돌아가고, 15분마다 자동으로 갱신�
    - 안 되면 ChatGPT **설정 → 보안**에서 Codex 기기 코드 로그인 허용 옵션을 켜 주세요.
 4. 브라우저 메뉴의 **홈 화면에 추가**를 누르면 앱처럼 쓸 수 있어요.
 
+### 4. Codex 조회를 GitHub Actions로 돌리기 (필수)
+chatgpt.com이 Cloudflare Worker에서 오는 요청을 막아서(HTTP 403), Codex 사용량은 GitHub Actions가 15분마다 대신 조회해 Worker에 올려요.
+
+1. 아무도 추측 못 할 긴 문자열을 하나 정해요 (예: 비밀번호 생성기로 만든 32자). 이게 `RELAY_SECRET`이에요.
+2. **Cloudflare**: Worker → Settings → Variables and Secrets → Add → Secret, 이름 `RELAY_SECRET`, 값은 위 문자열 → Deploy
+3. **GitHub**: 레포 → Settings → Secrets and variables → Actions → **New repository secret** 두 개 추가
+   - `RELAY_SECRET`: 위와 같은 문자열
+   - `WORKER_URL`: 대시보드 주소 (예: `https://usage-check.xxx.workers.dev`, 끝에 `/` 없이)
+4. 레포 → **Actions** 탭 → "Codex 사용량 중계" → **Run workflow**로 한 번 바로 실행해 보기
+
+> GitHub는 60일 동안 레포에 활동이 없으면 예약 실행을 멈춰요. 그러면 Actions 탭에서 다시 켜 주세요.
+
 ## 구조
 
 ```
 src/index.js   라우팅, 비밀번호 세션, 15분 크론
 src/claude.js  Claude OAuth(PKCE, 코드 붙여넣기) + /api/oauth/usage
-src/codex.js   Codex 기기 코드 로그인 + /backend-api/wham/usage
+src/codex.js   Codex 기기 코드 로그인, 토큰 갱신
 src/page.js    휴대폰용 대시보드 화면
+scripts/codex-relay.mjs + .github/workflows/codex-usage.yml  Codex 조회 중계 (GitHub Actions)
 ```
 
 로그인 토큰과 마지막 사용량은 Workers KV에 저장돼요. **연결 해제**를 누르면 토큰이 삭제돼요.
