@@ -354,8 +354,8 @@ function manifest() {
       short_name: "사용량",
       start_url: "/",
       display: "standalone",
-      background_color: "#0f1115",
-      theme_color: "#0f1115",
+      background_color: "#0C0D10",
+      theme_color: "#0C0D10",
       icons: [
         {
           src: "data:image/svg+xml," + encodeURIComponent(ICON_SVG),
