@@ -16,9 +16,9 @@ class_name = "TokenStore"
 tag = "v1"
 new_sqlite_classes = ["TokenStore"]
 
-# 10분마다 사용량을 자동으로 갱신합니다.
+# 15분마다 사용량을 자동으로 갱신합니다.
 [triggers]
-crons = ["*/10 * * * *"]
+crons = ["*/15 * * * *"]
 
 # 비밀값(DASHBOARD_PASSWORD, RELAY_SECRET, 선택: GITHUB_TOKEN)은 Cloudflare Secret으로 등록해요.
 # 목록은 .dev.vars.example에 있어요. README의 설치 방법을 참고하세요.
