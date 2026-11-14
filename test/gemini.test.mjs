@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normalize, validateUsage, usageUrl } from "../src/gemini.js";
-import { fetchUsage, runRelay } from "../scripts/gemini-relay.mjs";
+import { fetchUsage, fetchUsageWithRetry, runRelay } from "../scripts/gemini-relay.mjs";
 
 const sample = (pools) => ")]}'\n" + JSON.stringify([{ data: { viewer: { rpcs: { getUsageInfo: { pools } } } }, errors: [{ message: "unrelated private data" }] }]);
 const fixture = sample([
@@ -35,7 +35,7 @@ test("preflight failures never send to Worker or expose raw errors", async () =>
       log: (m) => logs.push(m), error: (m) => logs.push(m),
     });
     assert.equal(code, 1);
-    assert.equal(urls.length, cookie === "SID=private-cookie" ? 1 : 0);
+    assert.equal(urls.length, cookie === "SID=private-cookie" ? 2 : 0);
     assert.ok(urls.every((url) => new URL(url).hostname === "gemini.google.com"));
     assert.equal(logs.join().includes("private"), false);
   }
@@ -131,4 +131,29 @@ test("Google network errors are reported as safe codes, including unexpected pri
   assert.equal(code, 1);
   assert.deepEqual(reported, { ok: false, code: "unavailable" });
   assert.equal(logs.join().includes("private"), false);
+});
+
+
+test("temporary malformed response recovers with one bounded retry and safe logs", async () => {
+  let calls = 0;
+  const logs = [], waits = [];
+  const data = await fetchUsageWithRetry("SID=private", {
+    fetchImpl: async () => new Response(++calls === 1 ? "private malformed response" : fixture),
+    sleep: async (ms) => waits.push(ms), log: (s) => logs.push(s),
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(waits, [3000]);
+  assert.equal(data.windows[0].used_percent, 24);
+  assert.equal(logs.join().includes("private"), false);
+});
+
+test("persistent failures stop at two attempts; auth and rate limits are not retried", async () => {
+  for (const [status, code, attempts] of [[200, "schema", 2], [503, "unavailable", 2], [403, "auth", 1], [429, "rate_limit", 1]]) {
+    let calls = 0;
+    await assert.rejects(fetchUsageWithRetry("SID=private", {
+      fetchImpl: async () => { calls++; return new Response("invalid", { status }); },
+      sleep: async () => {}, log: () => {},
+    }), isCode(code));
+    assert.equal(calls, attempts);
+  }
 });

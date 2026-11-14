@@ -24,13 +24,24 @@ export async function fetchUsage(cookie, { fetchImpl = fetch, signature } = {}) 
   return normalize(text);
 }
 
-export async function runRelay(env = process.env, { fetchImpl = fetch, log = console.log, error = console.error } = {}) {
+export async function fetchUsageWithRetry(cookie, { fetchImpl = fetch, signature, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), log = console.log } = {}) {
+  try { return await fetchUsage(cookie, { fetchImpl, signature }); }
+  catch (err) {
+    // 인증 거부·429는 재시도하지 않아요. 원본 응답/오류에는 개인정보가 있을 수 있어 출력하지 않아요.
+    if (!(err instanceof GeminiError) || !["schema", "unavailable"].includes(err.code)) throw err;
+    log("Gemini 응답 확인 실패. 3초 뒤 한 번 재시도합니다.");
+    await sleep(3000);
+    return fetchUsage(cookie, { fetchImpl, signature });
+  }
+}
+
+export async function runRelay(env = process.env, { fetchImpl = fetch, log = console.log, error = console.error, sleep } = {}) {
   const cookie = env.GEMINI_COOKIE || "";
   // PR 브랜치에서는 실제 서버 조회만 확인하고 기존 대시보드에 전송하지 않아요.
   if (env.GEMINI_CHECK_ONLY === "true") {
     if (!cookie.trim()) { error(ERROR_MESSAGES.not_configured); return 1; }
     try {
-      const data = await fetchUsage(cookie, { fetchImpl, signature: env.GEMINI_QUERY_SIGNATURE || undefined });
+      const data = await fetchUsageWithRetry(cookie, { fetchImpl, signature: env.GEMINI_QUERY_SIGNATURE || undefined, log, sleep });
       log("Gemini 서버 조회 성공 (검사 전용: 대시보드 변경 없음)");
       for (const window of data.windows) log(`${window.label}: ${Number(window.used_percent.toFixed(2))}% 사용`);
       return 0;
@@ -58,7 +69,7 @@ export async function runRelay(env = process.env, { fetchImpl = fetch, log = con
     payload = { ok: false, code: "not_configured" };
   } else {
     try {
-      const data = await fetchUsage(cookie, { fetchImpl, signature: env.GEMINI_QUERY_SIGNATURE || undefined });
+      const data = await fetchUsageWithRetry(cookie, { fetchImpl, signature: env.GEMINI_QUERY_SIGNATURE || undefined, log, sleep });
       payload = { ok: true, data };
     } catch (err) {
       payload = { ok: false, code: err instanceof GeminiError ? err.code : "unavailable" };

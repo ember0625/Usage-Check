@@ -7,7 +7,7 @@ export const ERROR_MESSAGES = {
   auth: "Google 로그인이 만료됐거나 요청이 거부됐어요. Gemini 사용량 페이지를 확인하고 GEMINI_COOKIE를 갱신해 주세요.",
   rate_limit: "Gemini 조회가 너무 잦아요. 다음 자동 갱신을 기다려 주세요.",
   unavailable: "Gemini 사용량 서버에 연결할 수 없어요. 다음 갱신 때 다시 시도해요.",
-  schema: "Gemini 사용량 응답 형식이 바뀌었어요. 조회 코드를 업데이트해야 해요.",
+  schema: "Gemini 응답을 해석하지 못했어요. 일시적인 응답 오류 또는 조회 규격 변경일 수 있어요. 다음 갱신에도 계속되면 확인이 필요해요.",
   no_quota: "이 Google 계정에서는 Gemini 앱 사용 한도 정보가 제공되지 않았어요.",
   cookie_format: "GEMINI_COOKIE 형식을 확인해 주세요. Safari 확장 프로그램에서 현재 Gemini 사이트를 JSON 또는 Header String으로 내보내 그대로 등록하세요.",
 };
