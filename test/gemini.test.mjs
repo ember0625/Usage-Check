@@ -10,6 +10,37 @@ const fixture = sample([
 ]);
 const isCode = (code) => (e) => e.code === code;
 
+test("preflight uses only Google, accepts exported JSON and needs no Worker configuration", async () => {
+  const urls = [], logs = [];
+  const code = await runRelay({ GEMINI_CHECK_ONLY: "true", GEMINI_COOKIE: JSON.stringify([{ name: "SID", value: "private-cookie", domain: ".google.com", path: "/" }]) }, {
+    fetchImpl: async (url, opts) => {
+      urls.push(url);
+      assert.equal(new URL(url).hostname, "gemini.google.com");
+      assert.equal(opts.headers.Cookie, "SID=private-cookie");
+      return new Response(fixture);
+    }, log: (m) => logs.push(m), error: (m) => logs.push(m),
+  });
+  assert.equal(code, 0);
+  assert.equal(urls.length, 1);
+  assert.ok(logs.includes("5시간: 24% 사용"));
+  assert.ok(logs.includes("주간: 0% 사용"));
+  assert.equal(logs.join().includes("private"), false);
+});
+
+test("preflight failures never send to Worker or expose raw errors", async () => {
+  for (const cookie of ["", "invalid-private", "SID=private-cookie"]) {
+    const logs = [], urls = [];
+    const code = await runRelay({ GEMINI_CHECK_ONLY: "true", GEMINI_COOKIE: cookie, WORKER_URL: "https://worker.example", RELAY_SECRET: "private-relay" }, {
+      fetchImpl: async (url) => { urls.push(url); throw Error("private-response"); },
+      log: (m) => logs.push(m), error: (m) => logs.push(m),
+    });
+    assert.equal(code, 1);
+    assert.equal(urls.length, cookie === "SID=private-cookie" ? 1 : 0);
+    assert.ok(urls.every((url) => new URL(url).hostname === "gemini.google.com"));
+    assert.equal(logs.join().includes("private"), false);
+  }
+});
+
 test("maps fractions to percentages, preserves zero and rejects private fields", () => {
   const usage = normalize(fixture);
   assert.deepEqual(usage.windows.map((w) => w.used_percent), [24, 0]);

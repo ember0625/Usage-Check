@@ -28,7 +28,7 @@ Claude·Codex·Gemini 앱의 **사용 한도(5시간·주간)를 휴대폰에서
 
 - GitHub 계정
 - Cloudflare 계정 (무료, 카드 등록 필요 없음)
-- 휴대폰 브라우저 (Claude·Codex 설치는 PC 없이 가능; Gemini 쿠키 확보는 별도)
+- 휴대폰 브라우저 (Claude·Codex 설치는 PC 없이 가능; Gemini는 Safari 확장 프로그램과 별도 연결 확인 필요)
 
 ## 설치하기 (약 15분)
 
@@ -93,7 +93,7 @@ Codex 사용량은 chatgpt.com이 Cloudflare에서 오는 요청을 막아서, *
 
 ## Gemini 앱 연결 (선택)
 
-[Gemini 자동 조회 설정 안내](docs/gemini-setup.md)를 따라 `GEMINI_COOKIE`를 GitHub Actions Secret에 등록해 주세요. 기존 중계 작업이 Codex와 Gemini를 함께 조회합니다. 쿠키 만료 시 재등록이 필요할 수 있으며, 현재 안내하는 최초 쿠키 확보 방법은 데스크톱 브라우저 개발자 도구를 사용합니다.
+[Gemini 자동 조회 설정 안내](docs/gemini-setup.md)를 따라 `GEMINI_COOKIE`를 GitHub Actions Secret에 등록해 주세요. 기존 중계 작업이 Codex와 Gemini를 함께 조회합니다. 쿠키 만료 시 재등록이 필요할 수 있으며, 아이폰 Safari 확장에서 쿠키를 내보내 Scriptable로 조회하는 방식은 실계정에서 확인했습니다. PR 브랜치의 검사 전용 실행으로 GitHub 서버 조회까지 확인한 뒤 병합·배포합니다. PC는 필요하지 않습니다.
 
 ## 선택 기능
 

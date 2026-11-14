@@ -2,10 +2,11 @@
 // Worker에는 정규화된 사용량 또는 정해진 오류 코드만 보냅니다.
 import { pathToFileURL } from "node:url";
 import { GeminiError, ERROR_MESSAGES, normalize, usageUrl } from "../src/gemini.js";
+import { parseGeminiCookies } from "../src/gemini-cookies.js";
 
 export async function fetchUsage(cookie, { fetchImpl = fetch, signature } = {}) {
-  const value = cookie.trim();
-  if (!value || /[\r\n]/.test(value) || !value.includes("=") || /^cookie\s*:/i.test(value)) throw new GeminiError("cookie_format");
+  let value;
+  try { value = parseGeminiCookies(cookie); } catch { throw new GeminiError("cookie_format"); }
   let response;
   try {
     response = await fetchImpl(usageUrl(signature), {
@@ -25,6 +26,19 @@ export async function fetchUsage(cookie, { fetchImpl = fetch, signature } = {}) 
 
 export async function runRelay(env = process.env, { fetchImpl = fetch, log = console.log, error = console.error } = {}) {
   const cookie = env.GEMINI_COOKIE || "";
+  // PR 브랜치에서는 실제 서버 조회만 확인하고 기존 대시보드에 전송하지 않아요.
+  if (env.GEMINI_CHECK_ONLY === "true") {
+    if (!cookie.trim()) { error(ERROR_MESSAGES.not_configured); return 1; }
+    try {
+      const data = await fetchUsage(cookie, { fetchImpl, signature: env.GEMINI_QUERY_SIGNATURE || undefined });
+      log("Gemini 서버 조회 성공 (검사 전용: 대시보드 변경 없음)");
+      for (const window of data.windows) log(`${window.label}: ${Number(window.used_percent.toFixed(2))}% 사용`);
+      return 0;
+    } catch (err) {
+      error(ERROR_MESSAGES[err instanceof GeminiError ? err.code : "unavailable"]);
+      return 1;
+    }
+  }
   const secret = (env.RELAY_SECRET || "").trim();
   let origin;
   try {

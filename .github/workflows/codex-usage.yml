@@ -26,6 +26,7 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/codex-relay.mjs
+        if: ${{ github.ref_name == github.event.repository.default_branch }}
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           RELAY_SECRET: ${{ secrets.RELAY_SECRET }}
@@ -37,3 +38,4 @@ jobs:
           RELAY_SECRET: ${{ secrets.RELAY_SECRET }}
           GEMINI_COOKIE: ${{ secrets.GEMINI_COOKIE }}
           GEMINI_QUERY_SIGNATURE: ${{ vars.GEMINI_QUERY_SIGNATURE }}
+          GEMINI_CHECK_ONLY: ${{ github.ref_name != github.event.repository.default_branch }}

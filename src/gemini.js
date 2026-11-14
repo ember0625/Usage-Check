@@ -9,7 +9,7 @@ export const ERROR_MESSAGES = {
   unavailable: "Gemini 사용량 서버에 연결할 수 없어요. 다음 갱신 때 다시 시도해요.",
   schema: "Gemini 사용량 응답 형식이 바뀌었어요. 조회 코드를 업데이트해야 해요.",
   no_quota: "이 Google 계정에서는 Gemini 앱 사용 한도 정보가 제공되지 않았어요.",
-  cookie_format: "GEMINI_COOKIE 형식을 확인해 주세요. Cookie 요청 헤더의 값만 입력해야 해요.",
+  cookie_format: "GEMINI_COOKIE 형식을 확인해 주세요. Safari 확장 프로그램에서 현재 Gemini 사이트를 JSON 또는 Header String으로 내보내 그대로 등록하세요.",
 };
 
 export class GeminiError extends Error {
@@ -20,13 +20,13 @@ export class GeminiError extends Error {
 }
 
 export function usageUrl(signature = QUERY_SIGNATURE) {
-  const url = new URL("https://gemini.google.com/_/BardChatUi/graphql/schemas/GEMINI_WEB_GRAPHQL/executeQuery");
-  url.searchParams.set("query_signature", signature);
-  url.searchParams.set("variables", JSON.stringify({
+  const variables = JSON.stringify({
     g1Request: { entrypoints: ["GEMINI_USAGE_SETTINGS_UPGRADE_BANNER"] },
     workspaceRequest: { recommendationsForSurfaceRequests: [] },
-  }));
-  return url.toString();
+  });
+  // Scriptable의 JavaScriptCore에도 재사용할 수 있게 브라우저 URL 전역에 의존하지 않아요.
+  return "https://gemini.google.com/_/BardChatUi/graphql/schemas/GEMINI_WEB_GRAPHQL/executeQuery" +
+    "?query_signature=" + encodeURIComponent(signature) + "&variables=" + encodeURIComponent(variables);
 }
 
 export function normalize(text) {
