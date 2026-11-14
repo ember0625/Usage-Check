@@ -1,6 +1,13 @@
-name: Codex 사용량 중계
+name: Codex·Gemini 사용량 중계
 
 on:
+  push:
+    branches: [codex/add-gemini-app-usage]
+    paths:
+      - .github/workflows/codex-usage.yml
+      - scripts/gemini-relay.mjs
+      - src/gemini.js
+      - src/gemini-cookies.js
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
@@ -19,11 +26,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          sparse-checkout: scripts
+          sparse-checkout: |
+            scripts
+            src
       - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: node scripts/codex-relay.mjs
+        if: ${{ github.ref_name == github.event.repository.default_branch }}
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           RELAY_SECRET: ${{ secrets.RELAY_SECRET }}
+      - name: Gemini 앱 사용량 조회
+        if: ${{ !cancelled() }}
+        run: node scripts/gemini-relay.mjs
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          RELAY_SECRET: ${{ secrets.RELAY_SECRET }}
+          GEMINI_COOKIE: ${{ secrets.GEMINI_COOKIE }}
+          GEMINI_QUERY_SIGNATURE: ${{ vars.GEMINI_QUERY_SIGNATURE }}
+          GEMINI_CHECK_ONLY: ${{ github.ref_name != github.event.repository.default_branch }}

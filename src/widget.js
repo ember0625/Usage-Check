@@ -22,6 +22,7 @@ const C = {
   bad: new Color("#F06B5F"),
   claude: new Color("#D97757"),
   codex: new Color("#2DC8A8"),
+  gemini: new Color("#8AB4F8"),
 };
 
 // 위젯 크기별 글자·막대 크기
@@ -34,6 +35,7 @@ const SIZES = {
 const LOGOS = {
   claude: "https://www.google.com/s2/favicons?domain=claude.ai&sz=128",
   codex: "https://www.google.com/s2/favicons?domain=openai.com&sz=128",
+  gemini: "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=128",
 };
 
 // 로고는 한 번 받아서 기기에 저장해 두고 다시 써요.
@@ -143,7 +145,7 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
   h.addSpacer(6);
   addText(h, name, Font.boldSystemFont(S.name), C.text);
   h.addSpacer();
-  if (withRefresh) addRefreshIcon(h, S, false);
+  if (withRefresh) addRefreshIcon(h, S, true);
   col.addSpacer(S.rowGap - 2);
   if (!p || !p.connected) return addText(col, "연결 안 됨", Font.systemFont(S.label), C.muted);
   const ws = (p.windows || []).slice(0, S.max);
@@ -152,6 +154,10 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
     if (i) col.addSpacer(S.rowGap);
     addRow(col, w, S);
   });
+  if (p.fetched_at && Date.now() / 1000 - p.fetched_at > 2700) {
+    col.addSpacer(3);
+    addText(col, "오래된 데이터", Font.systemFont(S.label - 2), C.warn);
+  }
   if (p.ok === false) {
     col.addSpacer(4);
     addText(col, "갱신 실패", Font.systemFont(S.label - 2), C.bad);
@@ -165,9 +171,7 @@ function addFooter(parent, S, family) {
   const f = parent.addStack();
   f.layoutHorizontally();
   f.centerAlignContent();
-  const df = new DateFormatter();
-  df.dateFormat = "HH:mm";
-  addText(f, df.string(new Date()) + " 기준", Font.systemFont(S.label - 2), C.muted);
+  addText(f, "마지막 수집값", Font.systemFont(S.label - 2), C.muted);
   f.addSpacer();
   addRefreshIcon(f, S, true);
 }
@@ -199,7 +203,7 @@ function clock(ts) {
   return df.string(ts ? new Date(ts * 1000) : new Date());
 }
 
-function codexNote(d) {
+function relayNote(d) {
   if (!d) return "";
   if (d.started) return "";
   if (d.reason === "no_token") return "바로 조회하려면 Cloudflare에 GITHUB_TOKEN이 필요해요 (지금은 15분마다 자동)";
@@ -210,7 +214,7 @@ function codexNote(d) {
 async function manualRefresh() {
   const table = new UITable();
   table.showSeparators = true;
-  const rows = { claude: ["갱신 중…", ""], codex: ["갱신 중…", ""], foot: "" };
+  const rows = { claude: ["갱신 중…", ""], codex: ["갱신 중…", ""], gemini: ["갱신 중…", ""], foot: "" };
   const draw = () => {
     table.removeAllRows();
     const head = new UITableRow();
@@ -218,7 +222,7 @@ async function manualRefresh() {
     head.height = 56;
     head.addText("AI 사용량 새로고침", clock() + " 기준").titleFont = Font.boldSystemFont(20);
     table.addRow(head);
-    for (const [name, title] of [["claude", "Claude"], ["codex", "Codex"]]) {
+    for (const [name, title] of [["claude", "Claude"], ["codex", "Codex"], ["gemini", "Gemini"]]) {
       const r = new UITableRow();
       r.height = 72;
       const cell = r.addText(title + "  " + rows[name][0], rows[name][1]);
@@ -245,31 +249,47 @@ async function manualRefresh() {
   if (data.error) {
     rows.claude = ["불러오기 실패", data.error];
     rows.codex = ["", ""];
-    return draw();
+    rows.gemini = ["", ""];
+    draw();
+    await shown;
+    return;
   }
   rows.claude = data.claude.ok === false
     ? ["갱신 실패", "대시보드에서 확인해 주세요"]
     : [summary(data.claude), "갱신됨 " + clock(data.claude.fetched_at)];
 
-  if (data.codex.refreshing) {
-    // GitHub Actions가 끝날 때까지 기다려요. 보통 15~40초 걸려요.
-    let got = null;
-    for (let i = 0; i < 25 && !got; i++) {
-      rows.codex = ["갱신 중… " + Math.round(Date.now() / 1000 - startedAt) + "초", "GitHub Actions로 조회하는 중"];
-      draw();
-      await new Promise((r) => Timer.schedule(4000, false, r));
-      const d = await load("");
-      if (!d.error && Math.max(d.codex.fetched_at || 0, d.codex.error_at || 0) >= startedAt - 5) got = d;
+  const pending = new Set();
+  let latest = data;
+  const updateRows = () => {
+    for (const name of ["codex", "gemini"]) {
+      const p = latest[name];
+      if (pending.has(name)) rows[name] = ["갱신 중…", "GitHub Actions로 조회하는 중"];
+      else if (p && p.ok === false && p.connected) rows[name] = [summary(p), "갱신 실패 · 대시보드에서 확인해 주세요"];
+      else rows[name] = [summary(p), p && p.fetched_at ? "마지막 수집 " + clock(p.fetched_at) : "설정과 조회 상태는 대시보드에서 확인해 주세요"];
+      if (p && p.dispatch && !p.refreshing && p.connected) {
+        const note = relayNote(p.dispatch);
+        if (note) rows[name][1] = note;
+      }
     }
-    rows.codex = !got
-      ? [summary(data.codex), "아직 도착하지 않았어요. 잠시 뒤 다시 확인해 주세요"]
-      : got.codex.ok === false
-        ? ["갱신 실패", "대시보드에서 확인해 주세요"]
-        : [summary(got.codex), "갱신됨 " + clock(got.codex.fetched_at)];
-  } else {
-    const note = codexNote(data.codex.dispatch);
-    rows.codex = [summary(data.codex), (note ? note + " · " : "") + "마지막 " + clock(data.codex.fetched_at)];
+  };
+  for (const name of ["codex", "gemini"]) {
+    if (data[name] && data[name].refreshing) pending.add(name);
   }
+  updateRows(); draw();
+  for (let i = 0; i < 30 && pending.size; i++) {
+    await new Promise((r) => Timer.schedule(4000, false, r));
+    const d = await load("");
+    if (!d.error) {
+      latest = d;
+      for (const name of pending) {
+        const p = d[name];
+        const since = data[name].dispatch && data[name].dispatch.at || startedAt;
+        if (p && Math.max(p.fetched_at || 0, p.error_at || 0) >= since) pending.delete(name);
+      }
+    }
+    updateRows(); draw();
+  }
+  for (const name of pending) rows[name] = [summary(latest[name]), "아직 도착하지 않았어요. 잠시 뒤 다시 확인해 주세요"];
   rows.foot = "홈 화면 위젯은 iOS가 다시 그릴 때 반영돼요. 이 화면을 닫고 홈으로 돌아가면 보통 곧 바뀌어요.";
   draw();
   // 사용자가 이 화면을 닫을 때까지 기다렸다가 스크립트를 끝내요.
@@ -279,9 +299,17 @@ async function manualRefresh() {
 if (MANUAL) {
   await manualRefresh();
 } else {
-  const [data, claudeLogo, codexLogo] = await Promise.all([load(), logo("claude"), logo("codex")]);
+  const [data, claudeLogo, codexLogo, geminiLogo] = await Promise.all([load(), logo("claude"), logo("codex"), logo("gemini")]);
   const family = config.widgetFamily || "medium";
-  const S = SIZES[family] || SIZES.medium;
+  const icons = { claude: claudeLogo, codex: codexLogo, gemini: geminiLogo };
+  const titles = { claude: "Claude", codex: "Codex", gemini: "Gemini" };
+  // 작은 위젯은 기존 두 서비스를 유지해요. Parameter에 gemini를 넣으면 Gemini 전용으로 쓸 수 있어요.
+  const requested = String(args.widgetParameter || "").toLowerCase().split(",").map((v) => v.trim()).filter((v) => Object.keys(titles).includes(v));
+  const defaults = family === "small" ? ["claude", "codex"] : ["claude", "codex", ...(data.gemini && data.gemini.connected ? ["gemini"] : [])];
+  const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 3);
+  let S = { ...(SIZES[family] || SIZES.medium) };
+  if (family === "medium" && names.length === 3) S = { ...S, width: 88, name: 11, label: 10, pct: 16, remain: false, rowGap: 8 };
+  if (family === "large" && names.length === 3) S = { ...S, width: 290, name: 13, label: 11, pct: 16, bar: 4, rowGap: 4, max: 2 };
   const widget = new ListWidget();
   widget.backgroundColor = C.bg;
   widget.url = family === "small" ? REFRESH : DASHBOARD;
@@ -295,20 +323,21 @@ if (MANUAL) {
     addText(widget, data.error === "unauthorized" ? "위젯 키가 바뀌었어요. 스크립트를 다시 복사하세요." : "불러오기 실패", Font.systemFont(S.label), C.bad);
     widget.addSpacer();
     addFooter(widget, S, family);
-  } else if (family === "small") {
-    // 작은 위젯은 세로 공간이 빠듯해서 시각 줄을 빼고 새로고침 아이콘을 Claude 줄 오른쪽에 둬요.
+  } else if (family === "small" || (family === "large" && names.length === 3)) {
     widget.setPadding(11, 13, 11, 13);
-    addProvider(widget, "Claude", C.claude, claudeLogo, data.claude, S, true);
-    widget.addSpacer();
-    addProvider(widget, "Codex", C.codex, codexLogo, data.codex, S, false);
+    names.forEach((name, i) => {
+      if (i) widget.addSpacer();
+      addProvider(widget, titles[name], C[name], icons[name], data[name], S, i === 0);
+    });
   } else {
     widget.setPadding(14, 15, 12, 15);
     const cols = widget.addStack();
     cols.layoutHorizontally();
     cols.topAlignContent();
-    addProvider(cols, "Claude", C.claude, claudeLogo, data.claude, S, false);
-    cols.addSpacer();
-    addProvider(cols, "Codex", C.codex, codexLogo, data.codex, S, false);
+    names.forEach((name, i) => {
+      if (i) cols.addSpacer();
+      addProvider(cols, titles[name], C[name], icons[name], data[name], S, false);
+    });
     widget.addSpacer();
     addFooter(widget, S, family);
   }

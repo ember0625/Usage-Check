@@ -6,9 +6,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "wrangler deploy --dry-run --outdir dist"
+    "check": "wrangler deploy --dry-run --outdir dist",
+    "test": "node --test",
+    "build:phonecheck": "esbuild scripts/gemini-iphone-check.entry.mjs --bundle --format=esm --target=safari15.4 --outfile=mobile/Gemini-Connection-Check.js",
+    "pretest": "npm run build:phonecheck"
   },
   "devDependencies": {
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260930.0-alpha",
     "wrangler": "^4.0.0"
   }
 }

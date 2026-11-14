@@ -1,5 +1,6 @@
 import * as claude from "./claude.js";
 import * as codex from "./codex.js";
+import { validateUsage as validateGeminiUsage, ERROR_MESSAGES as GEMINI_ERRORS } from "./gemini.js";
 import { ICON_SVG, renderPage } from "./page.js";
 import { widgetScript } from "./widget.js";
 import { tokenStore } from "./tokens.js";
@@ -92,10 +93,11 @@ async function handle(request, env, ctx) {
   if (pathname === "/api/usage" && request.method === "GET") {
     let dispatch;
     if (url.searchParams.get("refresh") === "1") {
-      [, dispatch] = await Promise.all([refreshAll(env), dispatchCodex(env)]);
+      [, dispatch] = await Promise.all([refreshAll(env), dispatchRelay(env)]);
     }
     const out = await readAll(env);
     if (dispatch) out.codex.dispatch = dispatch;
+    if (dispatch && out.gemini.connected) out.gemini.dispatch = dispatch;
     return json(out);
   }
 
@@ -192,6 +194,8 @@ async function readAll(env, { skipLoginToken = false } = {}) {
     })
   );
   const out = Object.fromEntries(entries);
+  const geminiUsage = await getJson(env.KV, "usage:gemini");
+  out.gemini = { connected: geminiUsage?.configured === true, usage: geminiUsage, relay: true };
   if (!skipLoginToken && (!out.claude.connected || out.claude.usage?.needs_reconnect)) {
     const t = randomToken(24);
     await env.KV.put(`claudelogin:${t}`, "1", { expirationTtl: 1800 });
@@ -201,12 +205,13 @@ async function readAll(env, { skipLoginToken = false } = {}) {
   return out;
 }
 
-// ---- 새로고침 시 Codex 중계 즉시 실행 ----
+// ---- 새로고침 시 Codex·Gemini 중계 즉시 실행 ----
 
 // GITHUB_TOKEN(이 레포의 Actions 쓰기 권한만 있는 토큰)이 있으면 워크플로를 바로 실행해요.
 // 연타로 워크플로가 겹치지 않게 1분에 한 번까지만 실행해요.
-async function dispatchCodex(env) {
-  if (!usesRelay(env, "codex") || !(await codex.isConnected(env))) return null;
+async function dispatchRelay(env) {
+  const geminiUsage = await getJson(env.KV, "usage:gemini");
+  if (!env.RELAY_SECRET || (!(await codex.isConnected(env)) && !geminiUsage?.configured)) return null;
   const token = (env.GITHUB_TOKEN || "").trim();
   if (!token) return { started: false, reason: "no_token" };
   const last = Number(await env.KV.get("dispatch:codex")) || 0;
@@ -218,7 +223,7 @@ async function dispatchCodex(env) {
     return {
       started: false,
       reason: "error",
-      error: "아직 레포 이름을 몰라요. GitHub → Actions → 'Codex 사용량 중계' → Run workflow를 한 번 실행해 주세요.",
+      error: "아직 레포 이름을 몰라요. GitHub → Actions → 'Codex·Gemini 사용량 중계' → Run workflow를 한 번 실행해 주세요.",
     };
   }
   const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/codex-usage.yml/dispatches`, {
@@ -239,7 +244,7 @@ async function dispatchCodex(env) {
         : res.status === 403 || res.status === 404
           ? "GITHUB_TOKEN에 이 레포의 Actions 쓰기 권한이 없어요."
           : (await res.text().catch(() => "")).slice(0, 200);
-    return { started: false, reason: "error", error: `Codex 즉시 조회 실패 (HTTP ${res.status}): ${hint}` };
+    return { started: false, reason: "error", error: `중계 즉시 조회 실패 (HTTP ${res.status}): ${hint}` };
   }
   await env.KV.put("dispatch:codex", String(now()), { expirationTtl: 300 });
   return { started: true, at: now() };
@@ -264,15 +269,15 @@ async function widgetData(env, url) {
   // 위젯이 다시 그려질 때 오래된 값이면 새로 조회해요.
   // KV 쓰기 한도(하루 1,000회)를 넘지 않게 Claude는 5분, Codex는 10분 지난 경우에만 해요.
   // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. Codex 즉시 실행은 1분 제한이 따로 있어요.
-  let codexRefreshing = false;
-  let codexDispatch = null;
+  let relayRefreshing = false;
+  let relayDispatch = null;
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
-    const [cu, xu] = await Promise.all([getJson(env.KV, "usage:claude"), getJson(env.KV, "usage:codex")]);
+    const [cu, xu, gu] = await Promise.all([getJson(env.KV, "usage:claude"), getJson(env.KV, "usage:codex"), getJson(env.KV, "usage:gemini")]);
     const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
     const jobs = [];
     if (force || age(cu) >= 300) jobs.push(refreshOne(env, "claude"));
-    if (force || age(xu) >= 600) jobs.push(dispatchCodex(env).then((d) => { codexRefreshing = !!d?.started; codexDispatch = d; }));
+    if (force || age(xu) >= 600 || (gu?.configured && age(gu) >= 600)) jobs.push(dispatchRelay(env).then((d) => { relayRefreshing = !!d?.started; relayDispatch = d; }));
     await Promise.all(jobs);
   }
 
@@ -284,15 +289,43 @@ async function widgetData(env, url) {
     error_at: p.usage?.error_at ?? null,
     windows: (p.usage?.windows || []).map(({ label, used_percent, resets_at }) => ({ label, used_percent, resets_at })),
   });
-  return json({ claude: pick(all.claude), codex: { ...pick(all.codex), refreshing: codexRefreshing, dispatch: codexDispatch }, now: all.now });
+  return json({
+    claude: pick(all.claude),
+    codex: { ...pick(all.codex), refreshing: relayRefreshing && all.codex.connected, dispatch: relayDispatch },
+    gemini: { ...pick(all.gemini), refreshing: relayRefreshing && all.gemini.connected, dispatch: all.gemini.connected ? relayDispatch : null },
+    now: all.now,
+  });
 }
 
-// ---- GitHub Actions 중계 (Codex) ----
+// ---- GitHub Actions 중계 (Codex·Gemini) ----
 
 async function relay(request, env, pathname) {
   if (!env.RELAY_SECRET) return json({ error: "RELAY_SECRET이 설정되지 않았어요." }, 404);
   const auth = request.headers.get("Authorization") || "";
   if (!(await safeEqual(auth.trim(), `Bearer ${env.RELAY_SECRET.trim()}`))) return json({ error: "unauthorized" }, 401);
+
+  if (pathname === "/relay/gemini/usage" && request.method === "POST") {
+    const text = await request.text();
+    if (text.length > 8192) return json({ error: "요청이 너무 커요." }, 413);
+    let body;
+    try { body = JSON.parse(text); } catch { return json({ error: "잘못된 요청" }, 400); }
+    let entry;
+    if (body?.ok === true) {
+      let usage;
+      try { usage = validateGeminiUsage(body.data); } catch { return json({ error: "잘못된 사용량 형식" }, 400); }
+      entry = { ...usage, configured: true, ok: true, via: "relay", fetched_at: now() };
+    } else if (body?.ok === false && typeof body.code === "string" && Object.hasOwn(GEMINI_ERRORS, body.code)) {
+      const configured = body.code !== "not_configured";
+      const previous = configured ? await getJson(env.KV, "usage:gemini") : null;
+      // 쿠키 삭제 시 이전 계정의 수치를 지워요. 오류 때는 마지막 성공값을 보존해요.
+      entry = { ...(previous || {}), configured, ok: false, via: "relay", error: GEMINI_ERRORS[body.code],
+        needs_reconnect: body.code === "auth", error_at: now() };
+    } else return json({ error: "잘못된 요청" }, 400);
+    await putJson(env.KV, "usage:gemini", entry);
+    const repo = request.headers.get("X-GitHub-Repository") || "";
+    if (/^[\w.-]+\/[\w.-]+$/.test(repo) && repo !== (await env.KV.get("github:repo"))) await env.KV.put("github:repo", repo);
+    return json({ ok: true });
+  }
 
   if (pathname === "/relay/codex/token" && request.method === "GET") {
     // 중계 워크플로가 자기 레포 이름을 알려줘요. 새로고침 때 이 레포의 워크플로를 실행해요.
