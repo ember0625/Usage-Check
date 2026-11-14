@@ -10,7 +10,7 @@ const STYLE = `
   --muted: #9A9DA5; --muted2: #8B8E96; --muted3: #7C8088; --muted4: #6B6F77;
   --track: #24272D; --ok: #3DD68C; --warn: #F2B544; --bad: #F06B5F;
   --danger: #E8857A; --danger-text: #F09A8F;
-  --claude: #D97757; --codex: #2DC8A8;
+  --claude: #D97757; --codex: #2DC8A8; --gemini: #8AB4F8;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); }
@@ -135,6 +135,7 @@ const SCRIPT = `
 const $ = (s) => document.querySelector(s);
 const PROVIDERS = {
   claude: { title: "Claude", color: "var(--claude)", logo: "https://www.google.com/s2/favicons?domain=claude.ai&sz=128" },
+  gemini: { title: "Gemini", color: "var(--gemini)", logo: "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=128" },
   codex: { title: "Codex", color: "var(--codex)", logo: "https://www.google.com/s2/favicons?domain=openai.com&sz=128" },
 };
 let state = null;
@@ -339,7 +340,7 @@ function renderFoot(name, s) {
   if (meta.length) foot.append(el("span", { class: "meta" }, meta.join(" · ")));
 
   if (name === "codex") {
-    const n = codexWaitNote();
+    const n = relayWaitNote();
     if (n) foot.append(n);
     const last = Math.max(u.fetched_at || 0, u.error_at || 0);
     if (s.relay && last && Date.now() / 1000 - last > 45 * 60) {
@@ -384,13 +385,15 @@ function logoEl(meta) {
 
 function renderCard(name) {
   const meta = PROVIDERS[name];
-  const s = state[name];
+  const s = state[name] || { connected: false, usage: null };
   const u = s.usage;
   const card = el("section", { class: "card" },
     el("div", { class: "card-head" },
       logoEl(meta),
       el("h2", {}, meta.title),
       u && u.plan ? el("span", { class: "badge" }, u.plan) : null));
+
+  if (name === "gemini") return renderGeminiCard(card, s);
 
   if (!s.connected) {
     card.append(el("div", { class: "status-row" },
@@ -405,12 +408,38 @@ function renderCard(name) {
     card.append(el("div", { class: "windows" }, u.windows.map(renderWindow)));
   } else if (!u) {
     card.append(el("p", { class: "empty" }, s.relay
-      ? "GitHub Actions의 첫 조회를 기다리는 중이에요. 레포 → Actions → 'Codex 사용량 중계' → Run workflow로 바로 실행할 수 있어요."
+      ? "GitHub Actions의 첫 조회를 기다리는 중이에요. 레포 → Actions → 'Codex·Gemini 사용량 중계' → Run workflow로 바로 실행할 수 있어요."
       : "아직 데이터가 없어요. 새로고침을 눌러보세요."));
   } else {
     card.append(el("p", { class: "empty" }, "한도 정보가 없어요."));
   }
   card.append(renderFoot(name, s));
+  return card;
+}
+
+// Gemini 인증은 GitHub Secret에서만 관리해요. 화면에는 쿠키 입력란을 만들지 않아요.
+function renderGeminiCard(card, s) {
+  const u = s.usage;
+  card.append(el("p", { class: "note" }, "Gemini 앱 · 5시간 / 주간 한도"));
+  if (s.connected && u && u.windows && u.windows.length) {
+    card.append(el("div", { class: "windows" }, u.windows.map(renderWindow)));
+  } else {
+    card.append(el("p", { class: "empty" }, s.connected ? "사용량을 아직 가져오지 못했어요." : "자동 조회 설정이 필요해요."));
+  }
+  const foot = el("div", { class: "foot" });
+  if (u && u.fetched_at) foot.append(el("span", { class: "meta" }, "마지막 성공: " + ago(u.fetched_at)));
+  if (u && !u.ok && s.connected) foot.append(el("span", { class: "err" }, u.error || "갱신 실패"));
+  if (s.connected && u && Date.now() / 1000 - Math.max(u.fetched_at || 0, u.error_at || 0) > 2700) {
+    foot.append(el("span", { class: "err" }, "중계가 오래 갱신되지 않았어요. GitHub Actions를 확인해 주세요."));
+  }
+  const waiting = relayWaitNote("gemini");
+  if (waiting) foot.append(waiting);
+  if (!s.connected || (u && u.needs_reconnect)) {
+    foot.append(el("p", { class: "note" }, "GitHub의 GEMINI_COOKIE를 등록·갱신한 뒤 'Codex·Gemini 사용량 중계'를 실행하세요. 로그인 쿠키는 채팅에 보내지 마세요."));
+  }
+  foot.append(el("a", { class: "text-btn", href: "https://github.com/ember0625/Usage-Check/blob/main/docs/gemini-setup.md", target: "_blank", rel: "noopener noreferrer" }, "Gemini 연결·해제 방법"));
+  foot.append(el("a", { class: "text-btn", href: "https://gemini.google.com/usage", target: "_blank", rel: "noopener noreferrer" }, "Google에서 사용량 확인"));
+  card.append(foot);
   return card;
 }
 
@@ -471,7 +500,7 @@ async function rotateWidgetKey(msg) {
 
 function renderRefresh() {
   const btn = $("#refresh");
-  const busy = ui.refreshing || (codexWait && !codexWait.error);
+  const busy = ui.refreshing || Object.values(relayWait).some((w) => !w.error);
   btn.disabled = ui.refreshing;
   btn.replaceChildren(busy ? el("span", { class: "spinner" }) : "", busy ? "갱신 중" : "새로고침");
 }
@@ -481,51 +510,61 @@ function render() {
   if (!state) return;
   const active = document.activeElement;
   const wasTyping = active && active.tagName === "TEXTAREA" && !active.readOnly;
-  $("#cards").replaceChildren(...Object.keys(PROVIDERS).map(renderCard), renderWidgetCard());
+  $("#cards").replaceChildren(...["claude", "codex", "gemini"].map(renderCard), renderWidgetCard());
   if (wasTyping) { const t = document.querySelector(".panel textarea"); if (t) t.focus(); }
   tickResets();
 }
 
-// 새로고침으로 GitHub Actions를 실행했으면, 새 Codex 값이 올라올 때까지 잠깐씩 다시 확인해요.
-let codexWait = null;
+// 두 서비스의 완료 시점은 다를 수 있어 각각 새 결과를 기다려요.
+const relayWait = {};
+let loading = false;
 
 async function load(refresh) {
+  if (loading) return;
+  loading = true;
   if (refresh) { ui.refreshing = true; renderRefresh(); }
   try {
     state = await api("/api/usage" + (refresh ? "?refresh=1" : ""));
-    const d = state.codex && state.codex.dispatch;
-    if (d && d.started) codexWait = { since: d.at, until: Date.now() + 150000 };
-    else if (d && d.reason === "recent" && !codexWait) codexWait = { since: d.at, until: Date.now() + 60000 };
-    else if (d && d.reason === "error") codexWait = { error: d.error };
+    for (const name of ["codex", "gemini"]) {
+      const p = state[name];
+      const d = p && p.dispatch;
+      if (!p || !p.connected) { delete relayWait[name]; continue; }
+      if (d && d.started) relayWait[name] = { since: d.at, until: Date.now() + 150000 };
+      else if (d && d.reason === "recent" && !relayWait[name]) relayWait[name] = { since: d.at, until: Date.now() + 90000 };
+      else if (d && d.reason === "error") relayWait[name] = { error: d.error };
+    }
   } catch (e) {
     $("#cards").replaceChildren(el("div", { class: "card err" }, e.message));
+    ui.refreshing = false;
+    renderRefresh();
+    loading = false;
+    return;
   } finally {
+    loading = false;
     if (refresh) ui.refreshing = false;
   }
+  scheduleRelayCheck();
   render();
-  scheduleCodexCheck();
 }
 
-function codexUpdatedSince(since) {
-  const u = state && state.codex && state.codex.usage;
-  return !!u && Math.max(u.fetched_at || 0, u.error_at || 0) >= since;
-}
-
-function scheduleCodexCheck() {
-  if (!codexWait || codexWait.error) return;
-  if (codexUpdatedSince(codexWait.since) || Date.now() > codexWait.until) {
-    codexWait = null;
-    render();
-    return;
+function scheduleRelayCheck() {
+  clearTimeout(scheduleRelayCheck.t);
+  let pending = false;
+  for (const [name, wait] of Object.entries(relayWait)) {
+    if (wait.error) continue;
+    const u = state && state[name] && state[name].usage;
+    if (u && Math.max(u.fetched_at || 0, u.error_at || 0) >= wait.since) delete relayWait[name];
+    else if (Date.now() > wait.until) relayWait[name] = { error: "조회 결과가 아직 도착하지 않았어요. 잠시 뒤 다시 확인해 주세요." };
+    else pending = true;
   }
-  clearTimeout(scheduleCodexCheck.t);
-  scheduleCodexCheck.t = setTimeout(() => load(false), 8000);
+  if (pending) scheduleRelayCheck.t = setTimeout(() => load(false), 8000);
 }
 
-function codexWaitNote() {
-  if (!codexWait) return null;
-  if (codexWait.error) return el("span", { class: "err" }, codexWait.error);
-  return el("span", { class: "note" }, "GitHub Actions로 새로 조회하는 중… (30초~1분)");
+function relayWaitNote(name = "codex") {
+  const wait = relayWait[name];
+  if (!wait) return null;
+  if (wait.error) return el("span", { class: "err" }, wait.error);
+  return el("span", { class: "note" }, "GitHub Actions로 새로 조회하는 중… (보통 1~2분)");
 }
 
 async function disconnect(name) {
@@ -545,6 +584,8 @@ $("#logout").addEventListener("click", logout);
 // 다른 탭에서 돌아왔을 때 숫자만 새로 받아와요. 입력 중인 코드와 진행 상태는 flows에 남아 있어요.
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !flows.claudeBusy) load(false); });
 setInterval(tickResets, 15000);
+// 열린 화면도 서버에 저장된 최신 사용량을 받아요. 외부 서비스 조회는 일으키지 않아요.
+setInterval(() => { if (!document.hidden && !flows.claudeBusy && !flows.claudeOpen && !flows.codex) load(false); }, 60000);
 // 위젯의 새로고침 아이콘은 /?refresh=1로 열려요. 바로 새로 조회하고 주소는 원래대로 돌려놔요.
 const fromWidget = new URLSearchParams(location.search).get("refresh") === "1";
 if (fromWidget) history.replaceState(null, "", "/");
@@ -589,7 +630,7 @@ function shell(body, script = "") {
 </html>`;
 }
 
-const TITLE = `<div class="top-text"><h1>AI 사용량</h1><p class="subtitle">Claude·Codex 15분마다 자동 갱신</p></div>`;
+const TITLE = `<div class="top-text"><h1>AI 사용량</h1><p class="subtitle">Claude·Codex·Gemini 사용량</p></div>`;
 
 export function renderPage({ authed, setupMissing }) {
   if (setupMissing) {

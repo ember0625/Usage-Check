@@ -1,7 +1,7 @@
 # AI 사용량 (Usage-Check)
 
-Claude와 Codex 구독 플랜의 **사용 한도(5시간·주간)를 휴대폰에서 한눈에** 보는 개인용 대시보드예요.
-내 Cloudflare 계정(무료)에 내 사이트로 설치해서 쓰고, **휴대폰만으로 설치할 수 있어요.**
+Claude·Codex·Gemini 앱의 **사용 한도(5시간·주간)를 휴대폰에서 한눈에** 보는 개인용 대시보드예요.
+내 Cloudflare 계정(무료)에 내 사이트로 설치해서 쓰고, **Claude·Codex는 휴대폰만으로 설치할 수 있어요.** Gemini 자동 조회는 별도로 Google 로그인 쿠키 등록이 필요합니다.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ember0625/Usage-Check)
 
@@ -9,6 +9,7 @@ Claude와 Codex 구독 플랜의 **사용 한도(5시간·주간)를 휴대폰�
 |---|---|
 | **Claude** (Pro/Max) | 5시간 한도, 주간 한도. 앱·웹·Claude Code 사용량이 모두 합쳐진 값이에요 |
 | **Codex** (ChatGPT 플랜) | Codex 5시간·주간 한도 (CLI·클라우드·IDE 공용). ChatGPT 일반 채팅 한도는 아니에요 |
+| **Gemini 앱** | 앱의 5시간·주간 한도. Google 로그인 쿠키를 GitHub Secret에 별도로 등록해야 해요 |
 
 - 15분마다 자동 갱신, 새로고침 버튼으로 바로 갱신
 - 사용량에 따라 색이 바뀌어요 (50% 이상 노랑, 80% 이상 빨강)
@@ -18,7 +19,7 @@ Claude와 Codex 구독 플랜의 **사용 한도(5시간·주간)를 휴대폰�
 
 - **비공식 방식이에요.** Claude Code와 Codex CLI가 로그인하고 사용량을 조회하는 방식을 그대로 빌려 써요.
   공식 기능이 아니라서 언제든 바뀌거나 막힐 수 있고, 각 서비스 약관상 **회색지대**예요. 사용 여부는 본인이 판단해 주세요.
-- **각자 자기 사이트를 설치해서 쓰는 방식이에요.** 로그인 토큰은 **내 Cloudflare 계정에만** 저장돼요.
+- **각자 자기 사이트를 설치해서 쓰는 방식이에요.** Claude·Codex 로그인 토큰은 내 Cloudflare 계정에 저장되고, Codex 조회용 access token은 실행 중인 내 GitHub Actions에 전달돼요. Gemini 로그인 쿠키는 내 GitHub Actions Secret에 저장돼요.
   다른 사람의 사이트에 내 계정을 연결하지 마세요.
 - 대시보드는 **사용량을 읽기만** 해요. Claude는 프로필·사용량 조회 권한만 요청해요.
   Codex 토큰은 Codex CLI와 같은 권한이라, 사이트 비밀번호를 꼭 길게 정해 주세요.
@@ -27,7 +28,7 @@ Claude와 Codex 구독 플랜의 **사용 한도(5시간·주간)를 휴대폰�
 
 - GitHub 계정
 - Cloudflare 계정 (무료, 카드 등록 필요 없음)
-- 휴대폰 브라우저 (PC가 없어도 돼요)
+- 휴대폰 브라우저 (Claude·Codex 설치는 PC 없이 가능; Gemini 쿠키 확보는 별도)
 
 ## 설치하기 (약 15분)
 
@@ -72,7 +73,7 @@ Codex 사용량은 chatgpt.com이 Cloudflare에서 오는 요청을 막아서, *
    - `WORKER_URL`: 2단계에서 메모한 주소 (예: `https://usage-check.내이름.workers.dev`)
 3. 내 레포 → **Actions** 탭으로 가요.
    - 워크플로를 켜라는 안내가 보이면 켜 주세요.
-   - **Codex 사용량 중계 → Run workflow**를 눌러 한 번 바로 실행해요.
+   - **Codex·Gemini 사용량 중계 → Run workflow**를 눌러 한 번 바로 실행해요.
 
 ### 4단계. 계정 연결하기
 
@@ -90,12 +91,16 @@ Codex 사용량은 chatgpt.com이 Cloudflare에서 오는 요청을 막아서, *
 
 설치 끝! 🎉
 
+## Gemini 앱 연결 (선택)
+
+[Gemini 자동 조회 설정 안내](docs/gemini-setup.md)를 따라 `GEMINI_COOKIE`를 GitHub Actions Secret에 등록해 주세요. 기존 중계 작업이 Codex와 Gemini를 함께 조회합니다. 쿠키 만료 시 재등록이 필요할 수 있으며, 현재 안내하는 최초 쿠키 확보 방법은 데스크톱 브라우저 개발자 도구를 사용합니다.
+
 ## 선택 기능
 
-### 새로고침하면 Codex도 바로 조회하기
+### 새로고침하면 Codex·Gemini도 바로 조회하기
 
-`GITHUB_TOKEN`을 넣지 않으면 Codex는 15분마다 자동으로만 갱신돼요.
-토큰을 넣으면 새로고침을 누를 때 GitHub Actions가 바로 실행돼요. 30초~1분 뒤 반영돼요.
+`GITHUB_TOKEN`을 넣지 않으면 Codex·Gemini는 15분마다 자동으로만 갱신돼요.
+토큰을 넣으면 새로고침을 누를 때 GitHub Actions가 바로 실행돼요. 보통 1~2분 뒤 반영돼요.
 
 1. GitHub 오른쪽 위 프로필 → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**
    - Repository access: **Only select repositories** → **내 레포**
@@ -121,10 +126,10 @@ Codex 사용량은 chatgpt.com이 Cloudflare에서 오는 요청을 막아서, *
 | 서비스 | 무료 한도 | 이 사이트 사용량 |
 |---|---|---|
 | Cloudflare Workers | 하루 요청 10만 회 | 하루 수백 회 |
-| Cloudflare KV 쓰기 | 하루 1,000회 | 하루 약 200~400회 |
+| Cloudflare KV 쓰기 | 하루 1,000회 | 하루 약 300~500회 (수동 갱신 제외) |
 | GitHub Actions | 공개 레포는 무제한, 비공개 레포는 월 2,000분 | 15분마다 1분 → **비공개면 한도를 넘을 수 있어요** |
 
-레포를 비공개로 쓰려면 `.github/workflows/codex-usage.yml`의 실행 주기를 `*/30`으로 늘려 주세요.
+비공개 레포에서는 두 서비스가 같은 작업에서 실행되지만 실행 시간이 늘 수 있어요. 월 실행 시간을 확인해 주기를 조정하세요. 30분 간격도 하루 48회이므로 실행당 2분이면 30일에 약 2,880분입니다.
 
 ## 문제 해결
 
@@ -161,6 +166,8 @@ src/index.js    라우팅, 비밀번호 세션, 15분 크론, 중계 API
 src/tokens.js   토큰 저장소 (Durable Object)
 src/claude.js   Claude 로그인(OAuth, 코드 붙여넣기)과 사용량 조회
 src/codex.js    Codex 로그인(기기 코드)과 토큰 갱신
+src/gemini.js   Gemini 앱 사용량 정규화·중계 입력 검증
+scripts/gemini-relay.mjs   Gemini 앱 조회 중계 (쿠키는 GitHub Secret)
 src/page.js     대시보드 화면
 src/widget.js   iOS 위젯(Scriptable) 스크립트
 scripts/codex-relay.mjs, .github/workflows/codex-usage.yml   Codex 조회 중계 (GitHub Actions)
@@ -172,4 +179,6 @@ scripts/codex-relay.mjs, .github/workflows/codex-usage.yml   Codex 조회 중계
 npm install
 cp .dev.vars.example .dev.vars   # 값 채우기
 npm run dev
+npm test
+npm run check
 ```
