@@ -4,7 +4,7 @@ import { validateUsage as validateGeminiUsage, ERROR_MESSAGES as GEMINI_ERRORS }
 import { ICON_SVG, renderPage } from "./page.js";
 import { widgetScript } from "./widget.js";
 import { tokenStore } from "./tokens.js";
-import { AuthExpiredError, getJson, putJson, randomToken } from "./util.js";
+import { AuthExpiredError, randomToken } from "./util.js";
 
 // 토큰 저장소 Durable Object (wrangler.toml의 TOKENS 바인딩)
 export { TokenStore } from "./tokens.js";
@@ -13,7 +13,7 @@ const PROVIDERS = { claude, codex };
 const SESSION_COOKIE = "uc_session";
 const SESSION_TTL = 60 * 60 * 24 * 30;
 
-// 갱신 간격(초). KV 무료 쓰기 한도(하루 1,000회) 안에 들어오도록 정한 값이에요.
+// 갱신 간격(초). 서비스 쪽에 너무 자주 묻지 않도록 정한 값이에요.
 const CLAUDE_WIDGET_MAX_AGE = 600; // 위젯이 다시 그려질 때 Claude 값이 이보다 오래됐으면 새로 조회
 const RELAY_MAX_AGE = 900; // Codex·Gemini 값이 이보다 오래됐으면 GitHub Actions 중계를 요청
 const RELAY_MIN_GAP = 180; // 중계 요청 사이의 최소 간격
@@ -83,10 +83,10 @@ async function handle(request, env, ctx) {
   // 홈 화면 앱에서 연 링크는 Safari로 넘어가 쿠키가 없을 수 있어서, 1회용 토큰(t)도 받아요.
   if (pathname === "/claude/login" && request.method === "GET") {
     const t = url.searchParams.get("t");
-    const saved = t ? await getJson(env.KV, LOGIN_TOKEN_KEY) : null;
+    const saved = t ? await stateGet(env, LOGIN_TOKEN_KEY) : null;
     const viaToken = !!saved && saved.exp > now() && (await safeEqual(t, saved.t));
     if (!authed && !viaToken) return Response.redirect(new URL("/", url), 302);
-    if (viaToken) await env.KV.delete(LOGIN_TOKEN_KEY);
+    if (viaToken) await stateSet(env, LOGIN_TOKEN_KEY, null);
     const { url: target } = await claude.startLogin(env);
     return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
   }
@@ -141,14 +141,14 @@ async function handle(request, env, ctx) {
     if (action === "poll" && name === "codex") {
       const r = await p.pollLogin(env);
       if (!r.pending) {
-        await env.KV.delete(`usage:${name}`);
+        await stateSet(env, `usage:${name}`, null);
         ctx.waitUntil(refreshOne(env, name));
       }
       return json(r);
     }
     if (action === "disconnect") {
       await p.disconnect(env);
-      await env.KV.delete(`usage:${name}`);
+      await stateSet(env, `usage:${name}`, null);
       return json({ ok: true });
     }
   }
@@ -169,13 +169,13 @@ async function refreshOne(env, name) {
   try {
     const usage = await p.fetchUsage(env);
     if (!usage) {
-      await env.KV.delete(`usage:${name}`);
+      await stateSet(env, `usage:${name}`, null);
       return;
     }
     entry = { ok: true, fetched_at: now(), ...usage };
   } catch (err) {
     // 이전 값은 실패했을 때만 필요해서, 성공하면 읽지 않아요.
-    const prev = await getJson(env.KV, `usage:${name}`);
+    const prev = await stateGet(env, `usage:${name}`);
     entry = {
       ...(prev || {}),
       ok: false,
@@ -184,7 +184,7 @@ async function refreshOne(env, name) {
       error_at: now(),
     };
   }
-  await putJson(env.KV, `usage:${name}`, entry);
+  await stateSet(env, `usage:${name}`, entry);
 }
 
 async function refreshAll(env) {
@@ -192,18 +192,20 @@ async function refreshAll(env) {
 }
 
 async function readAll(env, { skipLoginToken = false } = {}) {
-  // 두 서비스의 KV 읽기를 한꺼번에 하고, 결과는 항상 같은 순서(claude → codex)로 담아요.
+  // 세 서비스의 사용량을 한 번에 읽고, 결과는 항상 같은 순서(claude → codex → gemini)로 담아요.
+  const saved = await tokenStore(env).getState(["usage:claude", "usage:codex", "usage:gemini"]);
   const entries = await Promise.all(
     Object.entries(PROVIDERS).map(async ([name, p]) => {
       const relayMode = usesRelay(env, name);
-      let [connected, usage] = await Promise.all([p.isConnected(env), getJson(env.KV, `usage:${name}`)]);
+      const connected = await p.isConnected(env);
+      let usage = saved[`usage:${name}`];
       // 중계 모드에선 Worker가 직접 조회하던 시절의 오래된 결과는 보여주지 않아요.
       if (relayMode && usage && usage.via !== "relay") usage = null;
       return [name, { connected, usage, relay: relayMode }];
     })
   );
   const out = Object.fromEntries(entries);
-  const geminiUsage = await getJson(env.KV, "usage:gemini");
+  const geminiUsage = saved["usage:gemini"];
   out.gemini = { connected: geminiUsage?.configured === true, usage: geminiUsage, relay: true };
   if (!skipLoginToken && (!out.claude.connected || out.claude.usage?.needs_reconnect)) {
     out.claude.login_url = `/claude/login?t=${await claudeLoginToken(env)}`;
@@ -213,12 +215,12 @@ async function readAll(env, { skipLoginToken = false } = {}) {
 }
 
 // Claude 로그인 링크에 붙는 1회용 토큰이에요.
-// 대시보드가 상태를 주기적으로 확인해도 KV 쓰기가 늘지 않게, 유효 시간이 10분 넘게 남은 토큰은 다시 써요.
+// 대시보드가 상태를 주기적으로 확인해도 쓰기가 늘지 않게, 유효 시간이 10분 넘게 남은 토큰은 다시 써요.
 async function claudeLoginToken(env) {
-  const saved = await getJson(env.KV, LOGIN_TOKEN_KEY);
+  const saved = await stateGet(env, LOGIN_TOKEN_KEY);
   if (saved && saved.exp - now() > 600) return saved.t;
   const t = randomToken(24);
-  await putJson(env.KV, LOGIN_TOKEN_KEY, { t, exp: now() + LOGIN_TOKEN_TTL }, { expirationTtl: LOGIN_TOKEN_TTL });
+  await stateSet(env, LOGIN_TOKEN_KEY, { t, exp: now() + LOGIN_TOKEN_TTL });
   return t;
 }
 
@@ -227,11 +229,11 @@ async function claudeLoginToken(env) {
 // GITHUB_TOKEN(이 레포의 Actions 쓰기 권한만 있는 토큰)이 있으면 워크플로를 바로 실행해요.
 // 연타로 워크플로가 겹치지 않게 3분에 한 번까지만 실행해요.
 async function dispatchRelay(env) {
-  const geminiUsage = await getJson(env.KV, "usage:gemini");
+  const geminiUsage = await stateGet(env, "usage:gemini");
   if (!env.RELAY_SECRET || (!(await codex.isConnected(env)) && !geminiUsage?.configured)) return null;
   const token = (env.GITHUB_TOKEN || "").trim();
   if (!token) return { started: false, reason: "no_token" };
-  const last = Number(await env.KV.get("dispatch:codex")) || 0;
+  const last = Number(await stateGet(env, "dispatch:codex")) || 0;
   if (now() - last < RELAY_MIN_GAP) return { started: false, reason: "recent", at: last };
 
   // 레포 이름은 중계 워크플로가 처음 실행될 때 자동으로 저장돼요. 직접 정하고 싶으면 GITHUB_REPO 변수를 넣어요.
@@ -265,15 +267,17 @@ async function dispatchRelay(env) {
           : (await res.text().catch(() => "")).slice(0, 200);
     return { started: false, reason: "error", error: `중계 즉시 조회 실패 (HTTP ${res.status}): ${hint}` };
   }
-  await env.KV.put("dispatch:codex", String(now()), { expirationTtl: 300 });
+  await stateSet(env, "dispatch:codex", now());
   return { started: true, at: now() };
 }
 
 // 예약 작업·사이트·위젯이 동일한 서버 캐시의 신선도를 기준으로 중계를 요청해요.
 async function refreshRelayIfStale(env, force = false) {
-  const [xu, gu, connected] = await Promise.all([
-    getJson(env.KV, "usage:codex"), getJson(env.KV, "usage:gemini"), codex.isConnected(env),
+  const [saved, connected] = await Promise.all([
+    tokenStore(env).getState(["usage:codex", "usage:gemini"]), codex.isConnected(env),
   ]);
+  const xu = saved["usage:codex"];
+  const gu = saved["usage:gemini"];
   const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
   if (force || (connected && usesRelay(env, "codex") && age(xu) >= RELAY_MAX_AGE) || (gu?.configured && age(gu) >= RELAY_MAX_AGE)) return dispatchRelay(env);
   return null;
@@ -296,13 +300,13 @@ async function widgetData(env, url) {
   if (!key || !(await safeEqual(given, key))) return json({ error: "unauthorized" }, 401);
 
   // 위젯이 다시 그려질 때 오래된 값이면 새로 조회해요.
-  // KV 쓰기 한도(하루 1,000회)를 넘지 않게 Claude는 10분, Codex·Gemini는 15분 지난 경우에만 해요.
+  // 너무 자주 조회하지 않게 Claude는 10분, Codex·Gemini는 15분 지난 경우에만 해요.
   // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. 중계 요청은 3분 제한이 따로 있어요.
   let relayRefreshing = false;
   let relayDispatch = null;
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
-    const cu = await getJson(env.KV, "usage:claude");
+    const cu = await stateGet(env, "usage:claude");
     const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
     const jobs = [];
     if (force || age(cu) >= CLAUDE_WIDGET_MAX_AGE) jobs.push(refreshOne(env, "claude"));
@@ -311,7 +315,7 @@ async function widgetData(env, url) {
   }
 
   const all = await readAll(env, { skipLoginToken: true });
-  const dispatchedAt = Number(await env.KV.get("dispatch:codex")) || 0;
+  const dispatchedAt = Number(await stateGet(env, "dispatch:codex")) || 0;
   const pending = (p) => p.connected && now() - dispatchedAt < RELAY_MIN_GAP && dispatchedAt > Math.max(p.usage?.fetched_at || 0, p.usage?.error_at || 0);
   const pick = (p) => ({
     connected: p.connected,
@@ -347,12 +351,12 @@ async function relay(request, env, pathname) {
       entry = { ...usage, configured: true, ok: true, via: "relay", fetched_at: now() };
     } else if (body?.ok === false && typeof body.code === "string" && Object.hasOwn(GEMINI_ERRORS, body.code)) {
       const configured = body.code !== "not_configured";
-      const previous = configured ? await getJson(env.KV, "usage:gemini") : null;
+      const previous = configured ? await stateGet(env, "usage:gemini") : null;
       // 쿠키 삭제 시 이전 계정의 수치를 지워요. 오류 때는 마지막 성공값을 보존해요.
       entry = { ...(previous || {}), configured, ok: false, via: "relay", error: GEMINI_ERRORS[body.code],
         needs_reconnect: body.code === "auth", error_at: now() };
     } else return json({ error: "잘못된 요청" }, 400);
-    await putJson(env.KV, "usage:gemini", entry);
+    await stateSet(env, "usage:gemini", entry);
     const repo = request.headers.get("X-GitHub-Repository") || "";
     if (/^[\w.-]+\/[\w.-]+$/.test(repo) && repo !== (await env.KV.get("github:repo"))) await env.KV.put("github:repo", repo);
     return json({ ok: true });
@@ -379,7 +383,7 @@ async function relay(request, env, pathname) {
     const body = await request.json().catch(() => null);
     if (!body) return json({ error: "잘못된 요청" }, 400);
     if (body.ok) {
-      await putJson(env.KV, "usage:codex", { ok: true, via: "relay", fetched_at: now(), ...codex.normalize(body.data) });
+      await stateSet(env, "usage:codex", { ok: true, via: "relay", fetched_at: now(), ...codex.normalize(body.data) });
     } else {
       await saveRelayError(env, String(body.error || "알 수 없는 오류"), body.status === 401);
     }
@@ -390,8 +394,8 @@ async function relay(request, env, pathname) {
 }
 
 async function saveRelayError(env, message, needsReconnect) {
-  const prev = await getJson(env.KV, "usage:codex");
-  await putJson(env.KV, "usage:codex", {
+  const prev = await stateGet(env, "usage:codex");
+  await stateSet(env, "usage:codex", {
     ...(prev || {}),
     ok: false,
     via: "relay",
@@ -454,6 +458,16 @@ async function safeEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
   return diff === 0;
+}
+
+// ---- 자주 바뀌는 값 저장 (Durable Object, tokens.js) ----
+
+async function stateGet(env, key) {
+  return tokenStore(env).getOne(key);
+}
+
+async function stateSet(env, key, value) {
+  await tokenStore(env).setState(key, value);
 }
 
 // ---- 응답 헬퍼 ----
