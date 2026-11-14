@@ -11,7 +11,7 @@ Claude·Codex·Gemini 앱의 **사용 한도(5시간·주간)를 휴대폰에서
 | **Codex** (ChatGPT 플랜) | Codex 5시간·주간 한도 (CLI·클라우드·IDE 공용). ChatGPT 일반 채팅 한도는 아니에요 |
 | **Gemini 앱** | 앱의 5시간·주간 한도. Google 로그인 쿠키를 GitHub Secret에 별도로 등록해야 해요 |
 
-- 15분마다 자동 갱신, 새로고침 버튼으로 바로 갱신
+- Cloudflare에서 10분마다 갱신 확인 (Codex·Gemini 중계 요청에는 `GITHUB_TOKEN` 필요), GitHub 15분 예약 실행도 유지
 - 사용량에 따라 색이 바뀌어요 (50% 이상 노랑, 80% 이상 빨강)
 - iOS 홈 화면 위젯 (무료 앱 Scriptable)
 
@@ -100,7 +100,7 @@ Codex 사용량은 chatgpt.com이 Cloudflare에서 오는 요청을 막아서, *
 ### 새로고침하면 Codex·Gemini도 바로 조회하기
 
 `GITHUB_TOKEN`을 넣지 않으면 Codex·Gemini는 15분마다 자동으로만 갱신돼요.
-토큰을 넣으면 새로고침을 누를 때 GitHub Actions가 바로 실행돼요. 보통 1~2분 뒤 반영돼요.
+토큰을 넣으면 Cloudflare가 10분마다 오래된 중계 데이터를 확인해 GitHub Actions 실행을 요청해요. 사이트·위젯에서도 오래된 값이면 같은 방식으로 요청하고, 수동 새로고침도 지원해요. 보통 1~2분 뒤 반영돼요.
 
 1. GitHub 오른쪽 위 프로필 → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**
    - Repository access: **Only select repositories** → **내 레포**
@@ -154,7 +154,7 @@ Codex 사용량은 chatgpt.com이 Cloudflare에서 오는 요청을 막아서, *
 [휴대폰 브라우저 / 위젯]
         │ 비밀번호 로그인
         ▼
-[내 Cloudflare Worker] ── 15분마다 ──▶ Anthropic: Claude 사용량 조회
+[내 Cloudflare Worker] ── 10분마다 ──▶ Anthropic: Claude 사용량 조회
         ▲    │
         │    └─ 토큰 저장소(Durable Object): 토큰 갱신을 한 번에 하나씩 처리
         │
@@ -162,7 +162,7 @@ Codex 사용량은 chatgpt.com이 Cloudflare에서 오는 요청을 막아서, *
 ```
 
 ```
-src/index.js    라우팅, 비밀번호 세션, 15분 크론, 중계 API
+src/index.js    라우팅, 비밀번호 세션, 10분 크론, 중계 API
 src/tokens.js   토큰 저장소 (Durable Object)
 src/claude.js   Claude 로그인(OAuth, 코드 붙여넣기)과 사용량 조회
 src/codex.js    Codex 로그인(기기 코드)과 토큰 갱신

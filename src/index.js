@@ -45,7 +45,7 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(refreshAll(env));
+    ctx.waitUntil(Promise.all([refreshAll(env), refreshRelayIfStale(env)]));
   },
 };
 
@@ -95,6 +95,7 @@ async function handle(request, env, ctx) {
     if (url.searchParams.get("refresh") === "1") {
       [, dispatch] = await Promise.all([refreshAll(env), dispatchRelay(env)]);
     }
+    else dispatch = await refreshRelayIfStale(env);
     const out = await readAll(env);
     if (dispatch) out.codex.dispatch = dispatch;
     if (dispatch && out.gemini.connected) out.gemini.dispatch = dispatch;
@@ -208,14 +209,14 @@ async function readAll(env, { skipLoginToken = false } = {}) {
 // ---- 새로고침 시 Codex·Gemini 중계 즉시 실행 ----
 
 // GITHUB_TOKEN(이 레포의 Actions 쓰기 권한만 있는 토큰)이 있으면 워크플로를 바로 실행해요.
-// 연타로 워크플로가 겹치지 않게 1분에 한 번까지만 실행해요.
+// 연타로 워크플로가 겹치지 않게 3분에 한 번까지만 실행해요.
 async function dispatchRelay(env) {
   const geminiUsage = await getJson(env.KV, "usage:gemini");
   if (!env.RELAY_SECRET || (!(await codex.isConnected(env)) && !geminiUsage?.configured)) return null;
   const token = (env.GITHUB_TOKEN || "").trim();
   if (!token) return { started: false, reason: "no_token" };
   const last = Number(await env.KV.get("dispatch:codex")) || 0;
-  if (now() - last < 60) return { started: false, reason: "recent", at: last };
+  if (now() - last < 180) return { started: false, reason: "recent", at: last };
 
   // 레포 이름은 중계 워크플로가 처음 실행될 때 자동으로 저장돼요. 직접 정하고 싶으면 GITHUB_REPO 변수를 넣어요.
   const repo = env.GITHUB_REPO || (await env.KV.get("github:repo"));
@@ -236,7 +237,9 @@ async function dispatchRelay(env) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ ref: "main" }),
-  });
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => null);
+  if (!res) return { started: false, reason: "error", error: "중계 요청에 연결하지 못했어요. 저장된 사용량을 표시합니다." };
   if (res.status !== 204) {
     const hint =
       res.status === 401
@@ -248,6 +251,16 @@ async function dispatchRelay(env) {
   }
   await env.KV.put("dispatch:codex", String(now()), { expirationTtl: 300 });
   return { started: true, at: now() };
+}
+
+// 예약 작업·사이트·위젯이 동일한 서버 캐시의 신선도를 기준으로 중계를 요청해요.
+async function refreshRelayIfStale(env, force = false) {
+  const [xu, gu, connected] = await Promise.all([
+    getJson(env.KV, "usage:codex"), getJson(env.KV, "usage:gemini"), codex.isConnected(env),
+  ]);
+  const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
+  if (force || (connected && usesRelay(env, "codex") && age(xu) >= 600) || (gu?.configured && age(gu) >= 600)) return dispatchRelay(env);
+  return null;
 }
 
 // ---- iOS 위젯 (Scriptable) ----
@@ -268,20 +281,22 @@ async function widgetData(env, url) {
 
   // 위젯이 다시 그려질 때 오래된 값이면 새로 조회해요.
   // KV 쓰기 한도(하루 1,000회)를 넘지 않게 Claude는 5분, Codex는 10분 지난 경우에만 해요.
-  // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. Codex 즉시 실행은 1분 제한이 따로 있어요.
+  // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. Codex 즉시 실행은 3분 제한이 따로 있어요.
   let relayRefreshing = false;
   let relayDispatch = null;
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
-    const [cu, xu, gu] = await Promise.all([getJson(env.KV, "usage:claude"), getJson(env.KV, "usage:codex"), getJson(env.KV, "usage:gemini")]);
+    const cu = await getJson(env.KV, "usage:claude");
     const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
     const jobs = [];
     if (force || age(cu) >= 300) jobs.push(refreshOne(env, "claude"));
-    if (force || age(xu) >= 600 || (gu?.configured && age(gu) >= 600)) jobs.push(dispatchRelay(env).then((d) => { relayRefreshing = !!d?.started; relayDispatch = d; }));
+    jobs.push(refreshRelayIfStale(env, force).then((d) => { relayRefreshing = !!d?.started || d?.reason === "recent"; relayDispatch = d; }));
     await Promise.all(jobs);
   }
 
   const all = await readAll(env, { skipLoginToken: true });
+  const dispatchedAt = Number(await env.KV.get("dispatch:codex")) || 0;
+  const pending = (p) => p.connected && now() - dispatchedAt < 180 && dispatchedAt > Math.max(p.usage?.fetched_at || 0, p.usage?.error_at || 0);
   const pick = (p) => ({
     connected: p.connected,
     ok: p.usage?.ok ?? null,
@@ -291,8 +306,8 @@ async function widgetData(env, url) {
   });
   return json({
     claude: pick(all.claude),
-    codex: { ...pick(all.codex), refreshing: relayRefreshing && all.codex.connected, dispatch: relayDispatch },
-    gemini: { ...pick(all.gemini), refreshing: relayRefreshing && all.gemini.connected, dispatch: all.gemini.connected ? relayDispatch : null },
+    codex: { ...pick(all.codex), refreshing: (relayRefreshing && all.codex.connected) || pending(all.codex), dispatch: relayDispatch },
+    gemini: { ...pick(all.gemini), refreshing: (relayRefreshing && all.gemini.connected) || pending(all.gemini), dispatch: all.gemini.connected ? relayDispatch : null },
     now: all.now,
   });
 }

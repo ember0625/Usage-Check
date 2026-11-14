@@ -217,9 +217,9 @@ function addProviderRow(parent, name, color, icon, p, S) {
   const text = addText(title, name, Font.boldSystemFont(S.name), C.text);
   text.minimumScaleFactor = 0.8;
   const stale = p?.fetched_at && Date.now() / 1000 - p.fetched_at > 2700;
-  if (p?.connected && (p.ok === false || stale)) {
+  if (p?.connected && (p.refreshing || p.ok === false || stale)) {
     brand.addSpacer(3);
-    addText(brand, p.ok === false ? "갱신 실패" : "오래된 데이터", Font.systemFont(S.timer), p.ok === false ? C.bad : C.warn);
+    addText(brand, p.refreshing ? "갱신 중 · 이전 값" : p.ok === false ? "갱신 실패" : "오래된 데이터", Font.systemFont(S.timer), p.refreshing ? C.muted : p.ok === false ? C.bad : C.warn);
   }
   const windows = p?.connected ? p.windows || [] : [];
   for (const label of ["5시간", "주간"]) {
@@ -283,7 +283,7 @@ function relayNote(d) {
   if (!d) return "";
   if (d.started) return "";
   if (d.reason === "no_token") return "바로 조회하려면 Cloudflare에 GITHUB_TOKEN이 필요해요 (지금은 15분마다 자동)";
-  if (d.reason === "recent") return "1분 안에 이미 요청했어요. 곧 반영돼요";
+  if (d.reason === "recent") return "3분 안에 이미 요청했어요. 곧 반영돼요";
   return d.error || "";
 }
 
@@ -391,7 +391,8 @@ if (MANUAL) {
   widget.backgroundColor = C.bg;
   widget.url = family === "small" ? REFRESH : DASHBOARD;
   // iOS에 5분 뒤 다시 그려 달라고 요청해요. 실제 시점은 iOS가 정해요.
-  widget.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000);
+  const pending = names.some((name) => data[name]?.refreshing);
+  widget.refreshAfterDate = new Date(Date.now() + (pending ? 1 : 5) * 60 * 1000);
 
   if (data.error) {
     widget.setPadding(14, 15, 12, 15);

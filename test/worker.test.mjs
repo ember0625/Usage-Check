@@ -77,3 +77,26 @@ test("generated dashboard and Scriptable scripts parse", () => {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   assert.doesNotThrow(() => new AsyncFunction(widgetScript("https://worker.test", "fake-key")));
 });
+
+
+test("stale dashboard and widget share refresh requests and newly relayed results", async () => {
+  await send({ ok: true, data: usage });
+  const old = JSON.parse(await kv.get("usage:gemini"));
+  old.fetched_at = Math.floor(Date.now() / 1000) - 3600;
+  await kv.put("usage:gemini", JSON.stringify(old));
+  await kv.delete("dispatch:codex");
+  const count = outbound.length;
+  const page = await (await dashboard()).json();
+  assert.equal(page.gemini.dispatch.started, true);
+  assert.equal(outbound.length, count + 1);
+  const pending = await (await mf.dispatchFetch("https://worker.test/api/widget?key=test-widget&refresh=1")).json();
+  assert.equal(pending.gemini.refreshing, true);
+  assert.equal(outbound.length, count + 1, "widget reuses the in-flight request");
+  await send({ ok: true, data: { windows: [{ ...usage.windows[0], used_percent: 31 }] } });
+  const latestPage = await (await dashboard()).json();
+  const latestWidget = await (await mf.dispatchFetch("https://worker.test/api/widget?key=test-widget")).json();
+  assert.equal(latestPage.gemini.usage.windows[0].used_percent, 31);
+  assert.equal(latestWidget.gemini.windows[0].used_percent, 31);
+  assert.equal(latestWidget.gemini.refreshing, false);
+  assert.equal(outbound.length, count + 1);
+});

@@ -584,8 +584,8 @@ $("#logout").addEventListener("click", logout);
 // 다른 탭에서 돌아왔을 때 숫자만 새로 받아와요. 입력 중인 코드와 진행 상태는 flows에 남아 있어요.
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !flows.claudeBusy) load(false); });
 setInterval(tickResets, 15000);
-// 열린 화면도 서버에 저장된 최신 사용량을 받아요. 외부 서비스 조회는 일으키지 않아요.
-setInterval(() => { if (!document.hidden && !flows.claudeBusy && !flows.claudeOpen && !flows.codex) load(false); }, 60000);
+// 최신 서버 상태를 읽고, 중계 데이터가 오래됐으면 서버가 조회를 요청해요.
+setInterval(() => { if (!document.hidden && !flows.claudeBusy && !flows.claudeOpen && !flows.codex) load(false); }, 30000);
 // 위젯의 새로고침 아이콘은 /?refresh=1로 열려요. 바로 새로 조회하고 주소는 원래대로 돌려놔요.
 const fromWidget = new URLSearchParams(location.search).get("refresh") === "1";
 if (fromWidget) history.replaceState(null, "", "/");
