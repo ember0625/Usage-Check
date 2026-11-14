@@ -210,10 +210,13 @@ function addProviderRow(parent, name, color, icon, p, S) {
   title.addSpacer(5);
   const text = addText(title, name, Font.boldSystemFont(S.name), C.text);
   text.minimumScaleFactor = 0.8;
+  // 홈 화면 위젯은 iOS가 다시 그릴 때까지 그대로 남아서, 잠깐 지나가는 "갱신 중" 상태는 표시하지 않아요.
+  // (중계는 보통 20초 안에 끝나는데, 그 순간이 찍히면 몇십 분씩 "갱신 중"으로 남아 있었어요.)
+  // 실제 문제가 있을 때만 표시해요.
   const stale = p?.fetched_at && Date.now() / 1000 - p.fetched_at > 2700;
-  if (p?.connected && (p.refreshing || p.ok === false || stale)) {
+  if (p?.connected && (p.ok === false || stale)) {
     brand.addSpacer(3);
-    addText(brand, p.refreshing ? "갱신 중 · 이전 값" : p.ok === false ? "갱신 실패" : "오래된 데이터", Font.systemFont(S.timer), p.refreshing ? C.muted : p.ok === false ? C.bad : C.warn);
+    addText(brand, p.ok === false ? "갱신 실패" : "오래된 데이터", Font.systemFont(S.timer), p.ok === false ? C.bad : C.warn);
   }
   const windows = p?.connected ? p.windows || [] : [];
   for (const label of ["5시간", "주간"]) {

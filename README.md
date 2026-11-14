@@ -127,7 +127,8 @@ GitHub의 예약 실행이 밀려서 값이 15분 넘게 오래되면, Cloudflar
 | 서비스 | 무료 한도 | 이 사이트 사용량 |
 |---|---|---|
 | Cloudflare Workers | 하루 요청 10만 회 | 하루 수백 회 |
-| Cloudflare KV 쓰기 | 하루 1,000회 | 평소 하루 약 350~550회, 많아도 약 800회 (코드 기준 추정) |
+| Cloudflare KV 쓰기 | 하루 1,000회 | 로그인·설정을 바꿀 때만 써요 (하루 몇 번) |
+| Durable Object 행 쓰기 | 하루 10만 행 | 사용량·토큰 저장. 하루 수백 행 |
 | GitHub Actions | 공개 레포는 무제한, 비공개 레포는 월 2,000분 | 15분마다 1분 → **비공개면 한도를 넘을 수 있어요** |
 
 비공개 레포에서는 두 서비스가 같은 작업에서 실행되지만 실행 시간이 늘 수 있어요. 월 실행 시간을 확인해 주기를 조정하세요. 30분 간격도 하루 48회이므로 실행당 2분이면 30일에 약 2,880분입니다.
@@ -157,14 +158,14 @@ GitHub의 예약 실행이 밀려서 값이 15분 넘게 오래되면, Cloudflar
         ▼
 [내 Cloudflare Worker] ── 15분마다 ──▶ Anthropic: Claude 사용량 조회
         ▲    │
-        │    └─ 토큰 저장소(Durable Object): 토큰 갱신을 한 번에 하나씩 처리
+        │    └─ 저장소(Durable Object): 토큰·사용량 저장, 토큰 갱신은 한 번에 하나씩 처리
         │
 [내 GitHub Actions] ── 15분마다 ──▶ chatgpt.com: Codex 사용량, gemini.google.com: Gemini 앱 사용량 조회 → Worker에 올림
 ```
 
 ```
 src/index.js    라우팅, 비밀번호 세션, 15분 크론, 중계 API
-src/tokens.js   토큰 저장소 (Durable Object)
+src/tokens.js   토큰·사용량 저장소 (Durable Object)
 src/claude.js   Claude 로그인(OAuth, 코드 붙여넣기)과 사용량 조회
 src/codex.js    Codex 로그인(기기 코드)과 토큰 갱신
 src/gemini.js   Gemini 앱 사용량 정규화·중계 입력 검증

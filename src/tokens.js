@@ -92,6 +92,29 @@ export class TokenStore extends DurableObject {
   async history() {
     return (await this.ctx.storage.get("log")) || [];
   }
+
+  // ---- 자주 바뀌는 값 (사용량, 중계 요청 시각, 로그인 링크 토큰) ----
+  // KV는 무료 쓰기 한도가 하루 1,000회라 이런 값은 여기에 둬요. (Durable Object는 하루 10만 행)
+  // 예전에 KV에 저장된 값은 처음 읽을 때 한 번만 옮겨 와요.
+
+  async getState(keys) {
+    const out = {};
+    for (const key of keys) {
+      let value = await this.ctx.storage.get("state:" + key);
+      if (value === undefined) {
+        const raw = await this.env.KV.get(key);
+        value = raw ? JSON.parse(raw) : null;
+        await this.ctx.storage.put("state:" + key, value);
+        if (raw) await this.env.KV.delete(key);
+      }
+      out[key] = value;
+    }
+    return out;
+  }
+
+  async setState(key, value) {
+    await this.ctx.storage.put("state:" + key, value ?? null);
+  }
 }
 
 /** Worker 쪽에서 쓰는 간단한 접근 도구 */
@@ -102,6 +125,9 @@ export function tokenStore(env) {
     put: (name, tokens) => stub.write(name, tokens),
     remove: (name) => stub.write(name, null),
     history: () => stub.history(),
+    getState: (keys) => stub.getState(keys),
+    getOne: async (key) => (await stub.getState([key]))[key],
+    setState: (key, value) => stub.setState(key, value),
     async fresh(name, opts) {
       const r = await stub.fresh(name, opts);
       if (r.error) throw r.expired ? new AuthExpiredError(r.error) : new Error(r.error);
