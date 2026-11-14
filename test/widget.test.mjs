@@ -25,10 +25,12 @@ for (const [family, parameter, expected] of [
       setPadding() {}
     }
     const now = Math.floor(Date.now() / 1000);
-    const provider = { connected: true, ok: true, windows: [{ label: "5시간", used_percent: 24, resets_at: now + 3600 }] };
+    const five = { label: "5시간", used_percent: 24, resets_at: now + 7200 };
+    const weekly = { label: "주간 (전체 모델)", used_percent: 42, resets_at: now + 27 * 3600 + 60 };
+    const provider = { connected: true, ok: true, windows: [weekly, five] };
     const data = {
       claude: { ...provider, fetched_at: now - 30 },
-      codex: { ...provider, fetched_at: now - 10 },
+      codex: { ...provider, windows: [{ ...weekly, label: "주간" }], fetched_at: now - 10 },
       gemini: { ...provider, fetched_at: now - 20 },
     };
     const context = {
@@ -47,6 +49,18 @@ for (const [family, parameter, expected] of [
       const latest = Math.max(...expected.map((name) => data[name.toLowerCase()].fetched_at));
       assert.ok(texts.includes("최근 갱신 " + latest * 1000), "uses actual latest timestamp among displayed services, not render time or hidden services");
       assert.equal(texts.includes("마지막 수집값"), false);
+      assert.ok(texts.includes("1일 3시간"), "restores reset countdowns");
+      assert.equal(texts.includes("/"), false);
+      for (const name of expected) {
+        const start = texts.indexOf(name);
+        const end = texts.findIndex((t, i) => i > start && expected.includes(t));
+        const row = texts.slice(start, end < 0 ? undefined : end);
+        assert.ok(row.indexOf("5시간") < row.indexOf("주간"), "five-hour and weekly columns stay in the requested order");
+        assert.ok(row.includes("42"));
+        if (name === "Codex") {
+          assert.ok(row.includes("—") && row.includes("제공 안 됨"), "missing five-hour data is not invented or replaced by weekly data");
+        } else assert.ok(row.includes("24"));
+      }
     }
   });
 }

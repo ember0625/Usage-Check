@@ -167,6 +167,70 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
   }
 }
 
+// 한 서비스가 한 행을 차지하고, 5시간·주간 칸은 항상 같은 위치에 표시해요.
+function addUsageCell(parent, label, w, p, S) {
+  const cell = parent.addStack();
+  cell.layoutVertically();
+  cell.size = new Size(S.width, 0);
+  const top = cell.addStack();
+  top.layoutHorizontally();
+  top.bottomAlignContent();
+  addText(top, label, Font.mediumSystemFont(S.label), C.label);
+  top.addSpacer();
+  const value = w && Number.isFinite(w.used_percent) ? Math.max(0, Math.min(100, w.used_percent)) : null;
+  const color = value === null ? C.muted : levelColor(value);
+  addText(top, value === null ? "—" : String(Math.round(value)), Font.semiboldSystemFont(S.pct), color);
+  if (value !== null) addText(top, "%", Font.mediumSystemFont(S.label), color);
+  cell.addSpacer(1);
+  const bar = cell.addStack();
+  bar.size = new Size(S.width, S.bar);
+  bar.backgroundColor = C.track;
+  bar.cornerRadius = S.bar / 2;
+  if (value > 0) {
+    const fill = bar.addStack();
+    fill.size = new Size(Math.max(4, S.width * value / 100), S.bar);
+    fill.backgroundColor = color;
+    fill.cornerRadius = S.bar / 2;
+  }
+  bar.addSpacer();
+  cell.addSpacer(2);
+  const caption = !p?.connected ? "연결 안 됨" : !w ? "제공 안 됨" : remain(w.resets_at) || "초기화 정보 없음";
+  const timer = addText(cell, caption, Font.systemFont(S.timer), C.muted);
+  timer.minimumScaleFactor = 0.8;
+}
+
+function addProviderRow(parent, name, color, icon, p, S) {
+  const row = parent.addStack();
+  row.layoutHorizontally();
+  row.centerAlignContent();
+  const brand = row.addStack();
+  brand.layoutVertically();
+  brand.size = new Size(S.brandWidth, 0);
+  const title = brand.addStack();
+  title.centerAlignContent();
+  if (icon) {
+    const img = title.addImage(icon);
+    img.imageSize = new Size(S.name + 3, S.name + 3);
+    img.cornerRadius = 3;
+  } else addText(title, "●", Font.systemFont(S.name - 3), color);
+  title.addSpacer(5);
+  const text = addText(title, name, Font.boldSystemFont(S.name), C.text);
+  text.minimumScaleFactor = 0.8;
+  const stale = p?.fetched_at && Date.now() / 1000 - p.fetched_at > 2700;
+  if (p?.connected && (p.ok === false || stale)) {
+    brand.addSpacer(3);
+    addText(brand, p.ok === false ? "갱신 실패" : "오래된 데이터", Font.systemFont(S.timer), p.ok === false ? C.bad : C.warn);
+  }
+  const windows = p?.connected ? p.windows || [] : [];
+  for (const label of ["5시간", "주간"]) {
+    row.addSpacer();
+    row.addSpacer(8);
+    // 다른 모델의 주간 한도를 전체 주간 한도로 대신 표시하지 않아요.
+    const w = windows.find((window) => shortLabel(window.label) === label);
+    addUsageCell(row, label, w, p, S);
+  }
+}
+
 // 현재 그린 시각이 아니라, 표시 중인 서비스의 실제 최근 수집 성공 시각이에요.
 function lastUpdated(data, names) {
   const times = names.map((name) => data[name]?.connected ? data[name].fetched_at : null)
@@ -319,8 +383,8 @@ if (MANUAL) {
   const defaults = family === "small" ? ["claude", "codex"] : ["claude", "codex", ...(data.gemini && data.gemini.connected ? ["gemini"] : [])];
   const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 3);
   let S = { ...(SIZES[family] || SIZES.medium) };
-  if (family === "medium" && names.length === 3) S = { ...S, width: 88, name: 12, remain: false };
-  if (family === "large" && names.length === 3) S = { ...S, width: 290, name: 13, label: 11, pct: 16, bar: 4, rowGap: 4, max: 2 };
+  if (family !== "small") S = { ...S, width: 100, brandWidth: 74, name: 11, label: 9, pct: 15, bar: 4, timer: 8.5, rowGap: 7 };
+  if (family === "large") S = { ...S, name: 12, label: 10, pct: 18, bar: 6, timer: 10, rowGap: 18 };
   const widget = new ListWidget();
   const updated = lastUpdated(data, names);
   widget.backgroundColor = C.bg;
@@ -335,26 +399,22 @@ if (MANUAL) {
     addText(widget, data.error === "unauthorized" ? "위젯 키가 바뀌었어요. 스크립트를 다시 복사하세요." : "불러오기 실패", Font.systemFont(S.label), C.bad);
     widget.addSpacer();
     addFooter(widget, S, updated);
-  } else if (family === "small" || (family === "large" && names.length === 3)) {
+  } else if (family === "small") {
     widget.setPadding(11, 13, 11, 13);
     names.forEach((name, i) => {
       if (i) widget.addSpacer();
       addProvider(widget, titles[name], C[name], icons[name], data[name], S, family === "small" && i === 0);
     });
-    if (family === "large") {
-      widget.addSpacer(8);
-      addFooter(widget, S, updated);
-    }
   } else {
-    widget.setPadding(12, 15, 10, 15);
-    const cols = widget.addStack();
-    cols.layoutHorizontally();
-    cols.topAlignContent();
+    widget.setPadding(10, 13, 9, 13);
     names.forEach((name, i) => {
-      if (i) cols.addSpacer();
-      addProvider(cols, titles[name], C[name], icons[name], data[name], S, false);
+      if (i) {
+        widget.addSpacer(S.rowGap);
+        widget.addSpacer();
+      }
+      addProviderRow(widget, titles[name], C[name], icons[name], data[name], S);
     });
-    widget.addSpacer(6);
+    widget.addSpacer(5);
     widget.addSpacer();
     addFooter(widget, S, updated);
   }
