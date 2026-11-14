@@ -1,6 +1,13 @@
 name: Codex·Gemini 사용량 중계
 
 on:
+  push:
+    branches: [codex/add-gemini-app-usage]
+    paths:
+      - .github/workflows/codex-usage.yml
+      - scripts/gemini-relay.mjs
+      - src/gemini.js
+      - src/gemini-cookies.js
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
