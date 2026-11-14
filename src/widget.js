@@ -28,7 +28,7 @@ const C = {
 // 위젯 크기별 글자·막대 크기
 const SIZES = {
   small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4, remain: false, max: 2 },
-  medium: { width: 138, name: 14, label: 12, pct: 18, bar: 6, rowGap: 9, remain: true, max: 2 },
+  medium: { width: 138, name: 13, label: 11, pct: 22, bar: 7, rowGap: 14, headerGap: 10, remain: true, max: 2 },
   large: { width: 138, name: 15, label: 13, pct: 20, bar: 6, rowGap: 11, remain: true, max: 5 },
 };
 
@@ -146,7 +146,7 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
   addText(h, name, Font.boldSystemFont(S.name), C.text);
   h.addSpacer();
   if (withRefresh) addRefreshIcon(h, S, true);
-  col.addSpacer(S.rowGap - 2);
+  col.addSpacer(S.headerGap ?? S.rowGap - 2);
   if (!p || !p.connected) return addText(col, "연결 안 됨", Font.systemFont(S.label), C.muted);
   const ws = (p.windows || []).slice(0, S.max);
   if (!ws.length) return addText(col, "데이터 없음", Font.systemFont(S.label), C.muted);
@@ -167,11 +167,22 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
   }
 }
 
-function addFooter(parent, S, family) {
+// 현재 그린 시각이 아니라, 표시 중인 서비스의 실제 최근 수집 성공 시각이에요.
+function lastUpdated(data, names) {
+  const times = names.map((name) => data[name]?.connected ? data[name].fetched_at : null)
+    .filter((ts) => typeof ts === "number" && Number.isFinite(ts) && ts > 0);
+  if (!times.length) return "갱신 기록 없음";
+  const date = new Date(Math.max(...times) * 1000);
+  const df = new DateFormatter();
+  df.dateFormat = date.toDateString() === new Date().toDateString() ? "HH:mm" : "M/d HH:mm";
+  return "최근 갱신 " + df.string(date);
+}
+
+function addFooter(parent, S, updated) {
   const f = parent.addStack();
   f.layoutHorizontally();
   f.centerAlignContent();
-  addText(f, "마지막 수집값", Font.systemFont(S.label - 2), C.muted);
+  addText(f, updated, Font.systemFont(Math.max(9, S.label - 2)), C.muted);
   f.addSpacer();
   addRefreshIcon(f, S, true);
 }
@@ -308,9 +319,10 @@ if (MANUAL) {
   const defaults = family === "small" ? ["claude", "codex"] : ["claude", "codex", ...(data.gemini && data.gemini.connected ? ["gemini"] : [])];
   const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 3);
   let S = { ...(SIZES[family] || SIZES.medium) };
-  if (family === "medium" && names.length === 3) S = { ...S, width: 88, name: 11, label: 10, pct: 16, remain: false, rowGap: 8 };
+  if (family === "medium" && names.length === 3) S = { ...S, width: 88, name: 12, remain: false };
   if (family === "large" && names.length === 3) S = { ...S, width: 290, name: 13, label: 11, pct: 16, bar: 4, rowGap: 4, max: 2 };
   const widget = new ListWidget();
+  const updated = lastUpdated(data, names);
   widget.backgroundColor = C.bg;
   widget.url = family === "small" ? REFRESH : DASHBOARD;
   // iOS에 5분 뒤 다시 그려 달라고 요청해요. 실제 시점은 iOS가 정해요.
@@ -322,15 +334,19 @@ if (MANUAL) {
     widget.addSpacer(6);
     addText(widget, data.error === "unauthorized" ? "위젯 키가 바뀌었어요. 스크립트를 다시 복사하세요." : "불러오기 실패", Font.systemFont(S.label), C.bad);
     widget.addSpacer();
-    addFooter(widget, S, family);
+    addFooter(widget, S, updated);
   } else if (family === "small" || (family === "large" && names.length === 3)) {
     widget.setPadding(11, 13, 11, 13);
     names.forEach((name, i) => {
       if (i) widget.addSpacer();
-      addProvider(widget, titles[name], C[name], icons[name], data[name], S, i === 0);
+      addProvider(widget, titles[name], C[name], icons[name], data[name], S, family === "small" && i === 0);
     });
+    if (family === "large") {
+      widget.addSpacer(8);
+      addFooter(widget, S, updated);
+    }
   } else {
-    widget.setPadding(14, 15, 12, 15);
+    widget.setPadding(12, 15, 10, 15);
     const cols = widget.addStack();
     cols.layoutHorizontally();
     cols.topAlignContent();
@@ -338,8 +354,9 @@ if (MANUAL) {
       if (i) cols.addSpacer();
       addProvider(cols, titles[name], C[name], icons[name], data[name], S, false);
     });
+    widget.addSpacer(6);
     widget.addSpacer();
-    addFooter(widget, S, family);
+    addFooter(widget, S, updated);
   }
 
   if (config.runsInWidget) Script.setWidget(widget);
