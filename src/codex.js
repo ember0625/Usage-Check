@@ -86,10 +86,6 @@ export async function refreshTokens(tokens) {
   return tokensFromResponse(await res.json(), tokens);
 }
 
-export async function isConnected(env) {
-  return !!(await tokenStore(env).get("codex"));
-}
-
 export async function disconnect(env) {
   await tokenStore(env).remove("codex");
 }

@@ -99,12 +99,16 @@ async function handle(request, env, ctx) {
   if (pathname === "/api/logout" && request.method === "POST") return logout(request, env);
 
   if (pathname === "/api/usage" && request.method === "GET") {
-    let dispatch;
+    let dispatch, out;
     if (url.searchParams.get("refresh") === "1") {
       [, dispatch] = await Promise.all([refreshAll(env), dispatchRelay(env)]);
+      out = await readAll(env);
+    } else {
+      // 중계 요청은 사용량을 바꾸지 않아서, 처음 읽은 값을 그대로 화면에 써요.
+      const snap = await snapshot(env);
+      dispatch = await refreshRelayIfStale(env, false, snap);
+      out = await overviewFrom(env, snap);
     }
-    else dispatch = await refreshRelayIfStale(env);
-    const out = await readAll(env);
     if (dispatch) out.codex.dispatch = dispatch;
     if (dispatch && out.gemini.connected) out.gemini.dispatch = dispatch;
     return json(out);
@@ -191,24 +195,33 @@ async function refreshAll(env) {
   await Promise.all(Object.keys(PROVIDERS).map((n) => refreshOne(env, n)));
 }
 
-async function readAll(env, { skipLoginToken = false } = {}) {
-  // 세 서비스의 사용량을 한 번에 읽고, 결과는 항상 같은 순서(claude → codex → gemini)로 담아요.
-  const saved = await tokenStore(env).getState(["usage:claude", "usage:codex", "usage:gemini"]);
-  const entries = await Promise.all(
-    Object.entries(PROVIDERS).map(async ([name, p]) => {
-      const relayMode = usesRelay(env, name);
-      const connected = await p.isConnected(env);
-      let usage = saved[`usage:${name}`];
-      // 중계 모드에선 Worker가 직접 조회하던 시절의 오래된 결과는 보여주지 않아요.
-      if (relayMode && usage && usage.via !== "relay") usage = null;
-      return [name, { connected, usage, relay: relayMode }];
-    })
-  );
-  const out = Object.fromEntries(entries);
-  const geminiUsage = saved["usage:gemini"];
+// 대시보드·위젯·중계 요청이 쓰는 값을 저장소에 한 번만 물어서 가져와요.
+// 결과: { connected: { claude, codex }, "usage:claude": …, "usage:codex": …, … }
+const SNAPSHOT_KEYS = ["usage:claude", "usage:codex", "usage:gemini", "dispatch:codex", LOGIN_TOKEN_KEY];
+
+async function snapshot(env) {
+  const { connected, state } = await tokenStore(env).overview(SNAPSHOT_KEYS);
+  return { connected, ...state };
+}
+
+async function readAll(env, opts) {
+  return overviewFrom(env, await snapshot(env), opts);
+}
+
+// 결과는 항상 같은 순서(claude → codex → gemini)로 담아요.
+async function overviewFrom(env, snap, { skipLoginToken = false } = {}) {
+  const out = {};
+  for (const name of Object.keys(PROVIDERS)) {
+    const relayMode = usesRelay(env, name);
+    let usage = snap[`usage:${name}`];
+    // 중계 모드에선 Worker가 직접 조회하던 시절의 오래된 결과는 보여주지 않아요.
+    if (relayMode && usage && usage.via !== "relay") usage = null;
+    out[name] = { connected: snap.connected[name], usage, relay: relayMode };
+  }
+  const geminiUsage = snap["usage:gemini"];
   out.gemini = { connected: geminiUsage?.configured === true, usage: geminiUsage, relay: true };
   if (!skipLoginToken && (!out.claude.connected || out.claude.usage?.needs_reconnect)) {
-    out.claude.login_url = `/claude/login?t=${await claudeLoginToken(env)}`;
+    out.claude.login_url = `/claude/login?t=${await claudeLoginToken(env, snap[LOGIN_TOKEN_KEY])}`;
   }
   out.now = now();
   return out;
@@ -216,8 +229,7 @@ async function readAll(env, { skipLoginToken = false } = {}) {
 
 // Claude 로그인 링크에 붙는 1회용 토큰이에요.
 // 대시보드가 상태를 주기적으로 확인해도 쓰기가 늘지 않게, 유효 시간이 10분 넘게 남은 토큰은 다시 써요.
-async function claudeLoginToken(env) {
-  const saved = await stateGet(env, LOGIN_TOKEN_KEY);
+async function claudeLoginToken(env, saved) {
   if (saved && saved.exp - now() > 600) return saved.t;
   const t = randomToken(24);
   await stateSet(env, LOGIN_TOKEN_KEY, { t, exp: now() + LOGIN_TOKEN_TTL });
@@ -228,12 +240,12 @@ async function claudeLoginToken(env) {
 
 // GITHUB_TOKEN(이 레포의 Actions 쓰기 권한만 있는 토큰)이 있으면 워크플로를 바로 실행해요.
 // 연타로 워크플로가 겹치지 않게 3분에 한 번까지만 실행해요.
-async function dispatchRelay(env) {
-  const geminiUsage = await stateGet(env, "usage:gemini");
-  if (!env.RELAY_SECRET || (!(await codex.isConnected(env)) && !geminiUsage?.configured)) return null;
+async function dispatchRelay(env, snap) {
+  snap ??= await snapshot(env);
+  if (!env.RELAY_SECRET || (!snap.connected.codex && !snap["usage:gemini"]?.configured)) return null;
   const token = (env.GITHUB_TOKEN || "").trim();
   if (!token) return { started: false, reason: "no_token" };
-  const last = Number(await stateGet(env, "dispatch:codex")) || 0;
+  const last = Number(snap["dispatch:codex"]) || 0;
   if (now() - last < RELAY_MIN_GAP) return { started: false, reason: "recent", at: last };
 
   // 레포 이름은 중계 워크플로가 처음 실행될 때 자동으로 저장돼요. 직접 정하고 싶으면 GITHUB_REPO 변수를 넣어요.
@@ -272,15 +284,17 @@ async function dispatchRelay(env) {
 }
 
 // 예약 작업·사이트·위젯이 동일한 서버 캐시의 신선도를 기준으로 중계를 요청해요.
-async function refreshRelayIfStale(env, force = false) {
-  const [saved, connected] = await Promise.all([
-    tokenStore(env).getState(["usage:codex", "usage:gemini"]), codex.isConnected(env),
-  ]);
-  const xu = saved["usage:codex"];
-  const gu = saved["usage:gemini"];
-  const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
-  if (force || (connected && usesRelay(env, "codex") && age(xu) >= RELAY_MAX_AGE) || (gu?.configured && age(gu) >= RELAY_MAX_AGE)) return dispatchRelay(env);
+async function refreshRelayIfStale(env, force = false, snap) {
+  snap ??= await snapshot(env);
+  const xu = snap["usage:codex"];
+  const gu = snap["usage:gemini"];
+  if (force || (snap.connected.codex && usesRelay(env, "codex") && age(xu) >= RELAY_MAX_AGE) || (gu?.configured && age(gu) >= RELAY_MAX_AGE)) return dispatchRelay(env, snap);
   return null;
+}
+
+// 마지막으로 조회(성공 또는 실패)한 뒤 지난 시간(초)
+function age(u) {
+  return now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
 }
 
 // ---- iOS 위젯 (Scriptable) ----
@@ -304,18 +318,20 @@ async function widgetData(env, url) {
   // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. 중계 요청은 3분 제한이 따로 있어요.
   let relayRefreshing = false;
   let relayDispatch = null;
+  let snap = await snapshot(env);
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
-    const cu = await stateGet(env, "usage:claude");
-    const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
+    const refreshClaude = force || age(snap["usage:claude"]) >= CLAUDE_WIDGET_MAX_AGE;
     const jobs = [];
-    if (force || age(cu) >= CLAUDE_WIDGET_MAX_AGE) jobs.push(refreshOne(env, "claude"));
-    jobs.push(refreshRelayIfStale(env, force).then((d) => { relayRefreshing = !!d?.started || d?.reason === "recent"; relayDispatch = d; }));
+    if (refreshClaude) jobs.push(refreshOne(env, "claude"));
+    jobs.push(refreshRelayIfStale(env, force, snap).then((d) => { relayRefreshing = !!d?.started || d?.reason === "recent"; relayDispatch = d; }));
     await Promise.all(jobs);
+    // 새로 조회했거나 중계 요청 시각이 바뀌었을 때만 다시 읽어요.
+    if (refreshClaude || relayDispatch?.started) snap = await snapshot(env);
   }
 
-  const all = await readAll(env, { skipLoginToken: true });
-  const dispatchedAt = Number(await stateGet(env, "dispatch:codex")) || 0;
+  const all = await overviewFrom(env, snap, { skipLoginToken: true });
+  const dispatchedAt = Number(snap["dispatch:codex"]) || 0;
   const pending = (p) => p.connected && now() - dispatchedAt < RELAY_MIN_GAP && dispatchedAt > Math.max(p.usage?.fetched_at || 0, p.usage?.error_at || 0);
   const pick = (p) => ({
     connected: p.connected,

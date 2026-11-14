@@ -115,18 +115,24 @@ export class TokenStore extends DurableObject {
   async setState(key, value) {
     await this.ctx.storage.put("state:" + key, value ?? null);
   }
+
+  /** 연결 여부(토큰이 있는지)와 저장된 값을 한 번에 돌려줘요. 대시보드·위젯이 여러 번 묻지 않게 해요. */
+  async overview(keys) {
+    const connected = {};
+    for (const name of Object.keys(REFRESHERS)) connected[name] = !!(await this.read(name));
+    return { connected, state: await this.getState(keys) };
+  }
 }
 
 /** Worker 쪽에서 쓰는 간단한 접근 도구 */
 export function tokenStore(env) {
   const stub = env.TOKENS.get(env.TOKENS.idFromName("main"));
   return {
-    get: (name) => stub.read(name),
     put: (name, tokens) => stub.write(name, tokens),
     remove: (name) => stub.write(name, null),
     history: () => stub.history(),
-    getState: (keys) => stub.getState(keys),
     getOne: async (key) => (await stub.getState([key]))[key],
+    overview: (keys) => stub.overview(keys),
     setState: (key, value) => stub.setState(key, value),
     async fresh(name, opts) {
       const r = await stub.fresh(name, opts);
