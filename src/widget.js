@@ -223,7 +223,8 @@ function addProviderRow(parent, name, color, icon, p, S) {
   }
   const windows = p?.connected ? p.windows || [] : [];
   for (const label of ["5시간", "주간"]) {
-    row.addSpacer();
+    // 서비스명 옆은 고정 간격으로 붙이고, 남는 너비는 두 사용량 칸 사이에 둬요.
+    if (label === "주간") row.addSpacer();
     row.addSpacer(8);
     // 다른 모델의 주간 한도를 전체 주간 한도로 대신 표시하지 않아요.
     const w = windows.find((window) => shortLabel(window.label) === label);
@@ -383,7 +384,7 @@ if (MANUAL) {
   const defaults = family === "small" ? ["claude", "codex"] : ["claude", "codex", ...(data.gemini && data.gemini.connected ? ["gemini"] : [])];
   const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 3);
   let S = { ...(SIZES[family] || SIZES.medium) };
-  if (family !== "small") S = { ...S, width: 100, brandWidth: 74, name: 11, label: 9, pct: 15, bar: 4, timer: 8.5, rowGap: 7 };
+  if (family !== "small") S = { ...S, width: 100, brandWidth: 70, name: 11, label: 9, pct: 15, bar: 4, timer: 8.5, rowGap: 7 };
   if (family === "large") S = { ...S, name: 12, label: 10, pct: 18, bar: 6, timer: 10, rowGap: 18 };
   const widget = new ListWidget();
   const updated = lastUpdated(data, names);
@@ -406,7 +407,8 @@ if (MANUAL) {
       addProvider(widget, titles[name], C[name], icons[name], data[name], S, family === "small" && i === 0);
     });
   } else {
-    widget.setPadding(10, 13, 9, 13);
+    // 둥근 모서리에 닿지 않도록 상단 수치와 하단 시각·새로고침을 안쪽에 둬요.
+    widget.setPadding(14, 18, 14, 20);
     names.forEach((name, i) => {
       if (i) {
         widget.addSpacer(S.rowGap);
