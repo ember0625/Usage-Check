@@ -2,13 +2,13 @@
 
 Gemini 앱의 **5시간·주간 사용률과 초기화 시각**을 GitHub Actions에서 조회합니다. Gemini API/AI Studio, Gemini CLI, Antigravity 사용량과는 다릅니다.
 
-이 기능은 Google의 공개 API가 아닌 웹 사용량 페이지의 내부 조회 규격을 이용합니다. 아이폰 실계정 조회는 확인했으며, GitHub 실행 환경의 조회는 배포 전에 별도로 확인합니다. Google의 변경·로그인 만료·추가 인증으로 중단될 수 있습니다.
+이 기능은 Google의 공개 API가 아닌 웹 사용량 페이지의 내부 조회 규격을 이용합니다. 아이폰과 GitHub Actions 실행 환경에서 실계정 조회를 확인했습니다. Google의 변경·로그인 만료·추가 인증으로 중단될 수 있습니다.
 
 ## 현재 검증 상태
 
 2026-11-14 사용자 실기기에서 **아이폰 Safari Cookie-Editor로 쿠키 확보 → Scriptable 조회**에 성공했고, 표시된 **5시간 5%·주간 0%**가 실제 Gemini 사용량과 일치함을 사용자가 확인했습니다. 이 확인은 채팅으로 제공한 간단 검사 스크립트로 수행했습니다. 저장소의 전체 검사 도구와 초기화 시각 표시는 별도로 실기기 검증해야 합니다.
 
-**GitHub Actions 서버에서의 실계정 조회와 최종 위젯 표시는 아직 검증 전입니다.** 아래 검사 전용 실행을 통과한 다음 병합·배포합니다. 모의 응답 테스트 통과를 실계정 연동 성공으로 간주하지 않습니다.
+**GitHub Actions 실계정 조회도 성공했습니다.** [2026-11-14 검사 실행](https://github.com/ember0625/Usage-Check/actions/runs/43572754482)에서 5시간 5%·주간 0.22%를 반환했습니다. 주간 값을 정수로 반올림하면 아이폰의 0% 표시와 일치합니다. 검사 전용 실행이므로 Worker에는 전송하지 않았습니다. 배포 후 대시보드 반영과 최종 위젯 표시는 별도로 확인해야 합니다.
 
 ## 1. 아이폰에서 현재 사이트 쿠키 내보내기
 
@@ -61,6 +61,12 @@ Google 로그인 쿠키는 사용량 전용 토큰이 아닙니다. **GitHub Sec
 - 작은 위젯: 기존 Claude·Codex 표시를 유지합니다. 위젯 편집 → **Parameter**에 `gemini`를 입력하면 Gemini 전용으로 표시합니다.
 - 표시 서비스 선택: `claude,gemini`처럼 입력할 수 있습니다. 작은 위젯은 최대 2개, 나머지는 최대 3개입니다.
 - 조회 실패 시 마지막 성공값을 유지하고 실패를 표시합니다. 45분 넘은 성공값에는 오래된 데이터 표시가 붙습니다. iOS가 홈 화면을 다시 그리는 시점은 별개입니다.
+
+## 정식 배포 설정
+
+Cloudflare Worker → Settings → Build에서 **Production branch**를 `main`, **Deploy command**를 `npx wrangler deploy`로 설정합니다. 저장 후 main의 최신 빌드를 다시 실행합니다. Preview command는 별도 항목이므로 정식 배포 명령으로 바꾸지 않습니다.
+
+로그에 `npx wrangler preview`가 나오고 `previews` 블록을 요구한다면 미리보기 명령이 실행된 것입니다. 정식 배포가 목적이라면 Production branch와 Deploy command를 먼저 확인합니다. 빈 `previews` 블록만 추가하는 것으로 정식 배포가 되지는 않습니다.
 
 ## 문제 해결
 
