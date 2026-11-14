@@ -585,7 +585,7 @@ $("#logout").addEventListener("click", logout);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !flows.claudeBusy) load(false); });
 setInterval(tickResets, 15000);
 // 최신 서버 상태를 읽고, 중계 데이터가 오래됐으면 서버가 조회를 요청해요.
-setInterval(() => { if (!document.hidden && !flows.claudeBusy && !flows.claudeOpen && !flows.codex) load(false); }, 30000);
+setInterval(() => { if (!document.hidden && !flows.claudeBusy && !flows.claudeOpen && !flows.codex) load(false); }, 60000);
 // 위젯의 새로고침 아이콘은 /?refresh=1로 열려요. 바로 새로 조회하고 주소는 원래대로 돌려놔요.
 const fromWidget = new URLSearchParams(location.search).get("refresh") === "1";
 if (fromWidget) history.replaceState(null, "", "/");

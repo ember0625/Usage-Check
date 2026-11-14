@@ -100,3 +100,24 @@ test("stale dashboard and widget share refresh requests and newly relayed result
   assert.equal(latestWidget.gemini.refreshing, false);
   assert.equal(outbound.length, count + 1);
 });
+
+test("dashboard polling reuses one Claude login token instead of writing a new one each time", async () => {
+  // Claude가 연결되지 않은 상태에서 대시보드가 상태를 여러 번 확인해도 토큰은 하나만 저장돼요.
+  const urls = [];
+  for (let i = 0; i < 5; i++) urls.push((await (await dashboard()).json()).claude.login_url);
+  assert.equal(new Set(urls).size, 1);
+  assert.equal((await kv.list({ prefix: "claudelogin" })).keys.length, 1);
+
+  // 쿠키 없이도(홈 화면 앱 → Safari) 토큰으로 로그인 페이지에 갈 수 있고, 한 번 쓰면 무효가 돼요.
+  const open = (path) => mf.dispatchFetch("https://worker.test" + path, { redirect: "manual" });
+  const first = await open(urls[0]);
+  assert.equal(first.status, 302);
+  assert.match(first.headers.get("Location"), /^https:\/\/claude\.com\/cai\/oauth\/authorize\?/);
+  const second = await open(urls[0]);
+  assert.equal(second.headers.get("Location"), "https://worker.test/");
+  assert.equal((await open("/claude/login?t=wrong")).headers.get("Location"), "https://worker.test/");
+
+  // 쓴 뒤에는 다음 확인 때 새 토큰을 받아요.
+  const next = (await (await dashboard()).json()).claude.login_url;
+  assert.notEqual(next, urls[0]);
+});

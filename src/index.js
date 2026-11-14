@@ -13,6 +13,13 @@ const PROVIDERS = { claude, codex };
 const SESSION_COOKIE = "uc_session";
 const SESSION_TTL = 60 * 60 * 24 * 30;
 
+// 갱신 간격(초). KV 무료 쓰기 한도(하루 1,000회) 안에 들어오도록 정한 값이에요.
+const CLAUDE_WIDGET_MAX_AGE = 600; // 위젯이 다시 그려질 때 Claude 값이 이보다 오래됐으면 새로 조회
+const RELAY_MAX_AGE = 900; // Codex·Gemini 값이 이보다 오래됐으면 GitHub Actions 중계를 요청
+const RELAY_MIN_GAP = 180; // 중계 요청 사이의 최소 간격
+const LOGIN_TOKEN_KEY = "claudelogin";
+const LOGIN_TOKEN_TTL = 1800;
+
 // 화면 HTML과 manifest는 요청마다 바뀌지 않아서 한 번만 만들어 둬요. (무료 플랜 CPU 시간 절약)
 const PAGES = {
   setup: renderPage({ setupMissing: true }),
@@ -76,9 +83,10 @@ async function handle(request, env, ctx) {
   // 홈 화면 앱에서 연 링크는 Safari로 넘어가 쿠키가 없을 수 있어서, 1회용 토큰(t)도 받아요.
   if (pathname === "/claude/login" && request.method === "GET") {
     const t = url.searchParams.get("t");
-    const viaToken = !!t && !!(await env.KV.get(`claudelogin:${t}`));
+    const saved = t ? await getJson(env.KV, LOGIN_TOKEN_KEY) : null;
+    const viaToken = !!saved && saved.exp > now() && (await safeEqual(t, saved.t));
     if (!authed && !viaToken) return Response.redirect(new URL("/", url), 302);
-    if (viaToken) await env.KV.delete(`claudelogin:${t}`);
+    if (viaToken) await env.KV.delete(LOGIN_TOKEN_KEY);
     const { url: target } = await claude.startLogin(env);
     return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
   }
@@ -198,12 +206,20 @@ async function readAll(env, { skipLoginToken = false } = {}) {
   const geminiUsage = await getJson(env.KV, "usage:gemini");
   out.gemini = { connected: geminiUsage?.configured === true, usage: geminiUsage, relay: true };
   if (!skipLoginToken && (!out.claude.connected || out.claude.usage?.needs_reconnect)) {
-    const t = randomToken(24);
-    await env.KV.put(`claudelogin:${t}`, "1", { expirationTtl: 1800 });
-    out.claude.login_url = `/claude/login?t=${t}`;
+    out.claude.login_url = `/claude/login?t=${await claudeLoginToken(env)}`;
   }
   out.now = now();
   return out;
+}
+
+// Claude 로그인 링크에 붙는 1회용 토큰이에요.
+// 대시보드가 상태를 주기적으로 확인해도 KV 쓰기가 늘지 않게, 유효 시간이 10분 넘게 남은 토큰은 다시 써요.
+async function claudeLoginToken(env) {
+  const saved = await getJson(env.KV, LOGIN_TOKEN_KEY);
+  if (saved && saved.exp - now() > 600) return saved.t;
+  const t = randomToken(24);
+  await putJson(env.KV, LOGIN_TOKEN_KEY, { t, exp: now() + LOGIN_TOKEN_TTL }, { expirationTtl: LOGIN_TOKEN_TTL });
+  return t;
 }
 
 // ---- 새로고침 시 Codex·Gemini 중계 즉시 실행 ----
@@ -216,7 +232,7 @@ async function dispatchRelay(env) {
   const token = (env.GITHUB_TOKEN || "").trim();
   if (!token) return { started: false, reason: "no_token" };
   const last = Number(await env.KV.get("dispatch:codex")) || 0;
-  if (now() - last < 180) return { started: false, reason: "recent", at: last };
+  if (now() - last < RELAY_MIN_GAP) return { started: false, reason: "recent", at: last };
 
   // 레포 이름은 중계 워크플로가 처음 실행될 때 자동으로 저장돼요. 직접 정하고 싶으면 GITHUB_REPO 변수를 넣어요.
   const repo = env.GITHUB_REPO || (await env.KV.get("github:repo"));
@@ -259,7 +275,7 @@ async function refreshRelayIfStale(env, force = false) {
     getJson(env.KV, "usage:codex"), getJson(env.KV, "usage:gemini"), codex.isConnected(env),
   ]);
   const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
-  if (force || (connected && usesRelay(env, "codex") && age(xu) >= 600) || (gu?.configured && age(gu) >= 600)) return dispatchRelay(env);
+  if (force || (connected && usesRelay(env, "codex") && age(xu) >= RELAY_MAX_AGE) || (gu?.configured && age(gu) >= RELAY_MAX_AGE)) return dispatchRelay(env);
   return null;
 }
 
@@ -280,8 +296,8 @@ async function widgetData(env, url) {
   if (!key || !(await safeEqual(given, key))) return json({ error: "unauthorized" }, 401);
 
   // 위젯이 다시 그려질 때 오래된 값이면 새로 조회해요.
-  // KV 쓰기 한도(하루 1,000회)를 넘지 않게 Claude는 5분, Codex는 10분 지난 경우에만 해요.
-  // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. Codex 즉시 실행은 3분 제한이 따로 있어요.
+  // KV 쓰기 한도(하루 1,000회)를 넘지 않게 Claude는 10분, Codex·Gemini는 15분 지난 경우에만 해요.
+  // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. 중계 요청은 3분 제한이 따로 있어요.
   let relayRefreshing = false;
   let relayDispatch = null;
   if (url.searchParams.get("refresh") === "1") {
@@ -289,14 +305,14 @@ async function widgetData(env, url) {
     const cu = await getJson(env.KV, "usage:claude");
     const age = (u) => now() - Math.max(u?.fetched_at || 0, u?.error_at || 0);
     const jobs = [];
-    if (force || age(cu) >= 300) jobs.push(refreshOne(env, "claude"));
+    if (force || age(cu) >= CLAUDE_WIDGET_MAX_AGE) jobs.push(refreshOne(env, "claude"));
     jobs.push(refreshRelayIfStale(env, force).then((d) => { relayRefreshing = !!d?.started || d?.reason === "recent"; relayDispatch = d; }));
     await Promise.all(jobs);
   }
 
   const all = await readAll(env, { skipLoginToken: true });
   const dispatchedAt = Number(await env.KV.get("dispatch:codex")) || 0;
-  const pending = (p) => p.connected && now() - dispatchedAt < 180 && dispatchedAt > Math.max(p.usage?.fetched_at || 0, p.usage?.error_at || 0);
+  const pending = (p) => p.connected && now() - dispatchedAt < RELAY_MIN_GAP && dispatchedAt > Math.max(p.usage?.fetched_at || 0, p.usage?.error_at || 0);
   const pick = (p) => ({
     connected: p.connected,
     ok: p.usage?.ok ?? null,

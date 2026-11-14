@@ -2,13 +2,7 @@
 
 Gemini 앱의 **5시간·주간 사용률과 초기화 시각**을 GitHub Actions에서 조회합니다. Gemini API/AI Studio, Gemini CLI, Antigravity 사용량과는 다릅니다.
 
-이 기능은 Google의 공개 API가 아닌 웹 사용량 페이지의 내부 조회 규격을 이용합니다. 아이폰과 GitHub Actions 실행 환경에서 실계정 조회를 확인했습니다. Google의 변경·로그인 만료·추가 인증으로 중단될 수 있습니다.
-
-## 현재 검증 상태
-
-2026-11-14 사용자 실기기에서 **아이폰 Safari Cookie-Editor로 쿠키 확보 → Scriptable 조회**에 성공했고, 표시된 **5시간 5%·주간 0%**가 실제 Gemini 사용량과 일치함을 사용자가 확인했습니다. 이 확인은 채팅으로 제공한 간단 검사 스크립트로 수행했습니다. 저장소의 전체 검사 도구와 초기화 시각 표시는 별도로 실기기 검증해야 합니다.
-
-**GitHub Actions 실계정 조회도 성공했습니다.** [2026-11-14 검사 실행](https://github.com/ember0625/Usage-Check/actions/runs/43572754482)에서 5시간 5%·주간 0.22%를 반환했습니다. 주간 값을 정수로 반올림하면 아이폰의 0% 표시와 일치합니다. 검사 전용 실행이므로 Worker에는 전송하지 않았습니다. 배포 후 대시보드 반영과 최종 위젯 표시는 별도로 확인해야 합니다.
+이 기능은 Google의 공개 API가 아닌 웹 사용량 페이지의 내부 조회 규격을 이용합니다. Google의 변경·로그인 만료·추가 인증으로 중단될 수 있습니다.
 
 ## 1. 아이폰에서 현재 사이트 쿠키 내보내기
 
@@ -33,18 +27,17 @@ Safari의 cookie store 조회 문제는 [Cookie-Editor #361](https://github.com/
 - 이 검사 도구는 Google에 한 번 직접 요청합니다. GitHub·Worker에 요청하거나 쿠키를 파일·Keychain·로그에 저장하지 않습니다. 자동으로 리다이렉트를 따라가지 않습니다.
 - 아이폰에서 성공해도 GitHub Actions 실행 환경에서 성공한 것은 아닙니다. 서버 검증은 다음 단계에서 별도로 합니다.
 
-## 3. 배포 전에 GitHub 서버 조회 확인
+## 3. GitHub에 쿠키 등록하고 조회 확인
 
 1. 아이폰 Safari에서 본인 GitHub 저장소 → Settings → Secrets and variables → Actions → New repository secret을 엽니다.
 2. 이름 `GEMINI_COOKIE`, 값은 내보낸 JSON 또는 Header String **그대로** 등록합니다. 변환·터미널·PC 개발자 도구가 필요하지 않습니다.
-3. Actions → 기존 사용량 중계 워크플로(`codex-usage.yml`) → **Run workflow**에서 브랜치를 **`codex/add-gemini-app-usage`**로 선택해 실행합니다. 병합 전에는 목록에 기존 Codex 워크플로 이름이 보일 수 있습니다.
-4. Gemini 단계 로그의 **서버 조회 성공** 및 5시간·주간 수치를 확인하고 Gemini 사용량 페이지와 비교합니다. 기본 브랜치가 아닌 곳에서는 **검사 전용**으로 동작합니다. Codex 중계를 건너뛰고 Worker로 아무 요청도 보내지 않으므로, 배포나 기존 대시보드 데이터 변경 없이 확인할 수 있습니다. 이 검사에는 `WORKER_URL`, `RELAY_SECRET`이 필요하지 않습니다.
-5. 서버 조회가 성공하고 수치가 일치한 뒤 PR을 병합하고 Worker 배포 완료를 확인합니다. 이후 기존 `WORKER_URL`, `RELAY_SECRET`을 설정한 **기본 브랜치**에서 중계를 실행하면 대시보드에 전송됩니다.
-6. 대시보드 수치 확인 후 기존 Scriptable 위젯 스크립트를 대시보드에서 다시 복사합니다.
+3. Actions → **Codex·Gemini 사용량 중계** → **Run workflow**를 기본 브랜치에서 실행합니다. 기존 `WORKER_URL`, `RELAY_SECRET`이 설정되어 있어야 대시보드에 전송됩니다.
+4. 대시보드의 Gemini 수치를 [Gemini 사용량 페이지](https://gemini.google.com/usage)와 비교합니다.
+5. 기존 Scriptable 위젯 스크립트를 대시보드에서 다시 복사합니다.
 
-검사 로그에는 사용률만 출력합니다. 공개 저장소라면 사용률도 공개 로그에 보입니다. 쿠키·Google 원본 응답·계정 식별자는 출력하지 않습니다. 서버 조회가 거부되면 병합·배포하지 않고 연결 방법부터 다시 확인합니다.
+기본 브랜치가 아닌 브랜치에서 실행하면 **검사 전용**으로 동작합니다. Google 조회 결과(사용률)만 로그에 출력하고 Worker에는 아무것도 보내지 않습니다. 공개 저장소라면 이 사용률은 공개 로그에 보입니다. 쿠키·Google 원본 응답·계정 식별자는 어느 경우에도 출력하지 않습니다.
 
-Cloudflare의 Actions 쓰기 권한이 있는 `GITHUB_TOKEN`을 설정하면 Worker가 10분마다 오래된 Codex·Gemini 데이터를 확인해 중계를 요청합니다. 사이트·위젯도 같은 기준을 쓰며, 중복 요청은 3분간 제한합니다. GitHub 자체의 15분 예약 실행은 보조 경로로 유지합니다. 열린 사이트는 30초마다 서버 상태를 확인하고, 위젯은 중계 중일 때 이전 값임을 표시하며 iOS에 1분 뒤 갱신을 요청합니다. 실제 위젯 표시 시점은 iOS가 결정합니다. 예약 실행은 지연될 수 있습니다. Codex 단계가 실패하더라도 Gemini 단계는 실행합니다. 쿠키가 없으면 Google 조회는 하지 않습니다.
+GitHub의 15분 예약 실행이 기본 경로입니다. Cloudflare에 Actions 쓰기 권한이 있는 `GITHUB_TOKEN`을 설정하면, 예약 실행이 밀려 Codex·Gemini 값이 15분 넘게 오래됐을 때 Worker(15분마다)·사이트·위젯이 중계를 요청합니다. 중복 요청은 3분간 제한합니다. 열린 사이트는 1분마다 서버 상태를 확인하고, 위젯은 중계 중일 때 이전 값임을 표시하며 iOS에 1분 뒤 갱신을 요청합니다. 실제 위젯 표시 시점은 iOS가 결정합니다. Codex 단계가 실패하더라도 Gemini 단계는 실행합니다. 쿠키가 없으면 Google 조회는 하지 않습니다.
 
 Google 로그인 쿠키는 사용량 전용 토큰이 아닙니다. **GitHub Secret 입력란에만 직접 등록**하고 코드·PR·채팅에는 붙여넣지 마세요. 서버는 쿠키를 Google에만 전송하고, Worker에는 사용률·초기화 시각 또는 정해진 오류 코드만 보냅니다. JSON 내보내기는 Gemini에 적용되는 도메인·경로의 유효한 쿠키만 사용합니다. Cloudflare에 `GEMINI_COOKIE`를 등록할 필요는 없습니다.
 

@@ -25,11 +25,11 @@ const C = {
   gemini: new Color("#8AB4F8"),
 };
 
-// 위젯 크기별 글자·막대 크기
+// 위젯 크기별 글자·막대 크기. 작은 위젯은 세로로 쌓고, 중간·큰 위젯은 서비스마다 한 줄씩 그려요.
 const SIZES = {
-  small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4, remain: false, max: 2 },
-  medium: { width: 138, name: 13, label: 11, pct: 22, bar: 7, rowGap: 14, headerGap: 10, remain: true, max: 2 },
-  large: { width: 138, name: 15, label: 13, pct: 20, bar: 6, rowGap: 11, remain: true, max: 5 },
+  small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4 },
+  medium: { width: 100, brandWidth: 70, name: 11, label: 9, pct: 15, bar: 4, timer: 8.5, rowGap: 7 },
+  large: { width: 100, brandWidth: 70, name: 12, label: 10, pct: 18, bar: 6, timer: 10, rowGap: 18 },
 };
 
 const LOGOS = {
@@ -94,6 +94,7 @@ function addText(parent, text, font, color) {
   return t;
 }
 
+// 작은 위젯의 한도 한 줄 (이름, 퍼센트, 막대)
 function addRow(parent, w, S) {
   const row = parent.addStack();
   row.layoutVertically();
@@ -102,18 +103,13 @@ function addRow(parent, w, S) {
   top.layoutHorizontally();
   top.bottomAlignContent();
   addText(top, shortLabel(w.label), Font.mediumSystemFont(S.label), C.label);
-  if (S.remain) {
-    top.addSpacer(4);
-    const r = addText(top, remain(w.resets_at), Font.systemFont(S.label - 2), C.muted);
-    r.minimumScaleFactor = 0.8;
-  }
   top.addSpacer();
   // 대시보드처럼 숫자는 크게, %는 작게
   const p = Math.max(0, Math.min(100, w.used_percent));
   const color = levelColor(p);
   addText(top, String(Math.round(w.used_percent)), Font.semiboldSystemFont(S.pct), color);
   addText(top, "%", Font.semiboldSystemFont(Math.round(S.pct * 0.55)), color);
-  row.addSpacer(S.remain ? 3 : 2);
+  row.addSpacer(2);
   const bar = row.addStack();
   bar.size = new Size(S.width, S.bar);
   bar.backgroundColor = C.track;
@@ -129,6 +125,7 @@ function addRow(parent, w, S) {
   bar.addSpacer();
 }
 
+// 작은 위젯의 서비스 한 칸
 function addProvider(parent, name, color, icon, p, S, withRefresh) {
   const col = parent.addStack();
   col.layoutVertically();
@@ -146,9 +143,9 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
   addText(h, name, Font.boldSystemFont(S.name), C.text);
   h.addSpacer();
   if (withRefresh) addRefreshIcon(h, S, true);
-  col.addSpacer(S.headerGap ?? S.rowGap - 2);
+  col.addSpacer(S.rowGap - 2);
   if (!p || !p.connected) return addText(col, "연결 안 됨", Font.systemFont(S.label), C.muted);
-  const ws = (p.windows || []).slice(0, S.max);
+  const ws = (p.windows || []).slice(0, 2);
   if (!ws.length) return addText(col, "데이터 없음", Font.systemFont(S.label), C.muted);
   ws.forEach((w, i) => {
     if (i) col.addSpacer(S.rowGap);
@@ -161,9 +158,6 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
   if (p.ok === false) {
     col.addSpacer(4);
     addText(col, "갱신 실패", Font.systemFont(S.label - 2), C.bad);
-  } else if (p.refreshing && MANUAL) {
-    col.addSpacer(4);
-    addText(col, "약 1분 뒤 반영", Font.systemFont(S.label - 2), C.muted);
   }
 }
 
@@ -383,9 +377,7 @@ if (MANUAL) {
   const requested = String(args.widgetParameter || "").toLowerCase().split(",").map((v) => v.trim()).filter((v) => Object.keys(titles).includes(v));
   const defaults = family === "small" ? ["claude", "codex"] : ["claude", "codex", ...(data.gemini && data.gemini.connected ? ["gemini"] : [])];
   const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 3);
-  let S = { ...(SIZES[family] || SIZES.medium) };
-  if (family !== "small") S = { ...S, width: 100, brandWidth: 70, name: 11, label: 9, pct: 15, bar: 4, timer: 8.5, rowGap: 7 };
-  if (family === "large") S = { ...S, name: 12, label: 10, pct: 18, bar: 6, timer: 10, rowGap: 18 };
+  const S = SIZES[family] || SIZES.medium;
   const widget = new ListWidget();
   const updated = lastUpdated(data, names);
   widget.backgroundColor = C.bg;
@@ -405,7 +397,7 @@ if (MANUAL) {
     widget.setPadding(11, 13, 11, 13);
     names.forEach((name, i) => {
       if (i) widget.addSpacer();
-      addProvider(widget, titles[name], C[name], icons[name], data[name], S, family === "small" && i === 0);
+      addProvider(widget, titles[name], C[name], icons[name], data[name], S, i === 0);
     });
   } else {
     // 둥근 모서리에 닿지 않도록 상단 수치와 하단 시각·새로고침을 안쪽에 둬요.
