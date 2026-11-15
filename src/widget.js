@@ -217,8 +217,13 @@ function addProviderCard(parent, id, title, icon, p, S, width, height) {
   card.borderColor = C.edge;
   card.borderWidth = 0.6;
   card.cornerRadius = S.radius;
-  card.setPadding(S.pad, S.pad, S.pad, S.pad);
+  // 큰 모서리 반경의 곡선 밖으로 로고·막대가 나가지 않도록 안전 영역을 확보해요.
+  // 세로 여백은 유지해서 두 한도 행의 높이를 줄이지 않아요.
+  const insetX = Math.max(S.pad, Math.ceil(S.radius * 0.7));
+  const contentWidth = width - insetX * 2;
+  card.setPadding(S.pad, insetX, S.pad, insetX);
   const h = card.addStack();
+  h.size = new Size(contentWidth, 0);
   h.layoutHorizontally();
   h.centerAlignContent();
   const img = h.addImage(icon);
@@ -241,7 +246,7 @@ function addProviderCard(parent, id, title, icon, p, S, width, height) {
   labels.forEach((label, i) => {
     if (i) card.addSpacer(S.rowGap);
     const w = windows.find((window) => shortLabel(window.label) === label);
-    addUsageCell(card, label, w, p, { ...S, width: width - S.pad * 2 });
+    addUsageCell(card, label, w, p, { ...S, width: contentWidth });
   });
   // 주간 한 줄인 Grok은 제목 아래 영역의 중앙에 배치해요.
   if (id === "grok") card.addSpacer();

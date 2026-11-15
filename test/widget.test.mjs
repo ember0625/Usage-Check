@@ -25,7 +25,7 @@ for (const [family, parameter, expected] of [
       bottomAlignContent() {}
       centerAlignContent() {}
       topAlignContent() {}
-      setPadding() {}
+      setPadding(...padding) { this.padding = padding; }
     }
     const now = Math.floor(Date.now() / 1000);
     const five = { label: "5시간", used_percent: 24, resets_at: now + 7200 };
@@ -60,6 +60,18 @@ for (const [family, parameter, expected] of [
       assert.equal(texts.filter(t => t === "|").length, expected.reduce((n, name) => n + (name === "Grok" ? 1 : 2), 0));
       const cards = stacks.filter((s) => s.backgroundColor?.value === "#232426");
       assert.equal(cards.length, expected.length);
+      const descendants = node => node.children.flatMap(c => [c, ...descendants(c)]);
+      for (const card of cards) {
+        const [top, right, bottom, left] = card.padding;
+        const r = card.cornerRadius;
+        for (const y of [top, bottom]) for (const x of [left, right]) {
+          const dx = Math.max(0, r - x), dy = Math.max(0, r - y);
+          assert.ok(dx * dx + dy * dy <= (r - card.borderWidth) ** 2, "content corners stay inside the rounded card border");
+        }
+        const tracks = descendants(card).filter(s => s.backgroundColor?.value === "#444851");
+        assert.ok(tracks.length > 0);
+        for (const bar of tracks) assert.equal(bar.size.width, card.size.width - left - right, "full usage tracks respect both safe insets");
+      }
       if (expected.length === 4) {
         assert.equal(stacks.filter((s) => s.children.filter((c) => cards.includes(c)).length === 2).length, 2, "four cards form two rows of two");
         assert.equal(new Set(cards.map((c) => c.size.height)).size, 1, "Grok retains the same card height");
