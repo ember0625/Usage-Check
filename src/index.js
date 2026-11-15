@@ -1,7 +1,6 @@
 import * as claude from "./claude.js";
 import * as codex from "./codex.js";
 import * as grok from "./grok.js";
-import { renderGrokPage } from "./grok-page.js";
 import { validateUsage as validateGeminiUsage, ERROR_MESSAGES as GEMINI_ERRORS } from "./gemini.js";
 import { ICON_SVG, renderPage } from "./page.js";
 import { widgetScript } from "./widget.js";
@@ -16,7 +15,7 @@ const SESSION_COOKIE = "uc_session";
 const SESSION_TTL = 60 * 60 * 24 * 30;
 
 // 갱신 간격(초). 서비스 쪽에 너무 자주 묻지 않도록 정한 값이에요.
-const CLAUDE_WIDGET_MAX_AGE = 600; // 위젯이 다시 그려질 때 Claude 값이 이보다 오래됐으면 새로 조회
+const WIDGET_MAX_AGE = 600; // 위젯이 다시 그려질 때 Claude·Grok 값이 이보다 오래됐으면 새로 조회
 const RELAY_MAX_AGE = 900; // Codex·Gemini 값이 이보다 오래됐으면 GitHub Actions 중계를 요청
 const RELAY_MIN_GAP = 180; // 중계 요청 사이의 최소 간격
 const LOGIN_TOKEN_KEY = "claudelogin";
@@ -80,6 +79,8 @@ async function handle(request, env, ctx) {
   if (pathname === "/" || pathname === "/index.html") {
     return html(authed ? PAGES.dashboard : PAGES.login);
   }
+  // 예전의 Grok 전용 화면 주소. 이제 대시보드 카드에서 연결해요.
+  if (pathname === "/grok") return Response.redirect(new URL("/", url), 302);
 
   // 로그인 페이지로 바로 보내는 링크. 비동기 처리 없이 열 수 있어서 휴대폰 팝업 차단에 걸리지 않아요.
   // 홈 화면 앱에서 연 링크는 Safari로 넘어가 쿠키가 없을 수 있어서, 1회용 토큰(t)도 받아요.
@@ -99,17 +100,6 @@ async function handle(request, env, ctx) {
   }
 
   if (pathname === "/api/logout" && request.method === "POST") return logout(request, env);
-
-  if (pathname === "/grok" && request.method === "GET") return html(renderGrokPage());
-  if ((pathname === "/api/grok/status" && request.method === "GET") ||
-      (pathname === "/api/grok/refresh" && request.method === "POST")) {
-    let snap = await tokenStore(env).overview(["usage:grok"]);
-    if (snap.connected.grok && (request.method === "POST" || age(snap.state["usage:grok"]) >= CLAUDE_WIDGET_MAX_AGE)) {
-      await refreshOne(env, "grok");
-      snap = await tokenStore(env).overview(["usage:grok"]);
-    }
-    return json({ connected: snap.connected.grok, usage: snap.state["usage:grok"], now: now() });
-  }
 
   if (pathname === "/api/usage" && request.method === "GET") {
     let dispatch, out;
@@ -283,7 +273,7 @@ async function dispatchRelay(env, snap) {
     body: JSON.stringify({ ref: "main" }),
     signal: AbortSignal.timeout(10000),
   }).catch(() => null);
-  if (!res) return { started: false, reason: "error", error: "중계 요청에 연결하지 못했어요. 저장된 사용량을 표시합니다." };
+  if (!res) return { started: false, reason: "error", error: "GitHub에 연결하지 못했어요. 저장된 사용량을 보여드려요." };
   if (res.status !== 204) {
     const hint =
       res.status === 401
@@ -291,7 +281,7 @@ async function dispatchRelay(env, snap) {
         : res.status === 403 || res.status === 404
           ? "GITHUB_TOKEN에 이 레포의 Actions 쓰기 권한이 없어요."
           : (await res.text().catch(() => "")).slice(0, 200);
-    return { started: false, reason: "error", error: `중계 즉시 조회 실패 (HTTP ${res.status}): ${hint}` };
+    return { started: false, reason: "error", error: `즉시 갱신 실패 (HTTP ${res.status}): ${hint}` };
   }
   await stateSet(env, "dispatch:codex", now());
   return { started: true, at: now() };
@@ -328,15 +318,15 @@ async function widgetData(env, url) {
   if (!key || !(await safeEqual(given, key))) return json({ error: "unauthorized" }, 401);
 
   // 위젯이 다시 그려질 때 오래된 값이면 새로 조회해요.
-  // 너무 자주 조회하지 않게 Claude는 10분, Codex·Gemini는 15분 지난 경우에만 해요.
+  // 너무 자주 조회하지 않게 Claude·Grok은 10분, Codex·Gemini는 15분 지난 경우에만 해요.
   // 위젯의 새로고침 버튼(force=1)은 이 간격을 무시해요. 중계 요청은 3분 제한이 따로 있어요.
   let relayRefreshing = false;
   let relayDispatch = null;
   let snap = await snapshot(env);
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
-    const refreshClaude = force || age(snap["usage:claude"]) >= CLAUDE_WIDGET_MAX_AGE;
-    const refreshGrok = snap.connected.grok && (force || age(snap["usage:grok"]) >= CLAUDE_WIDGET_MAX_AGE);
+    const refreshClaude = force || age(snap["usage:claude"]) >= WIDGET_MAX_AGE;
+    const refreshGrok = snap.connected.grok && (force || age(snap["usage:grok"]) >= WIDGET_MAX_AGE);
     const jobs = [];
     if (refreshClaude) jobs.push(refreshOne(env, "claude"));
     if (refreshGrok) jobs.push(refreshOne(env, "grok"));

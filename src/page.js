@@ -220,7 +220,7 @@ function tickResets() {
 // ---- 화면 상태 ----
 // 다시 그려도 입력값·열림 상태가 유지되도록 여기에 보관해요.
 const ui = { raw: {}, confirm: null, refreshing: false, widgetOpen: false };
-const flows = { claudeOpen: false, claudeDraft: "", claudeMsg: "", claudeBusy: false, codex: null };
+const flows = { claudeOpen: false, claudeDraft: "", claudeMsg: "", claudeBusy: false, device: {} };
 try { flows.claudeOpen = sessionStorage.getItem("claudeOpen") === "1"; } catch (e) {}
 
 function setClaudeOpen(v) {
@@ -275,64 +275,101 @@ async function finishClaude() {
   }
 }
 
-// ---- Codex 연결 ----
+// ---- Codex·Grok 연결 (기기 코드 방식) ----
+// 화면에 코드를 보여주고, 각 서비스의 로그인 페이지에서 승인하면 자동으로 연결돼요.
 
-function codexButton(label) {
-  return el("button", { class: "primary-sm", onclick: () => startCodex() }, label);
+const DEVICE = {
+  codex: {
+    site: "OpenAI",
+    steps: ["아래 코드를 복사하세요.", "OpenAI 페이지를 열고 로그인한 뒤 코드를 입력하세요.", "승인이 끝나면 이 화면이 자동으로 바뀌어요."],
+  },
+  grok: {
+    site: "Grok",
+    steps: ["Grok 페이지를 열고 로그인하세요.", "화면의 코드가 아래 코드와 같은지 확인하고 개인 계정으로 승인하세요.", "승인이 끝나면 이 화면이 자동으로 바뀌어요."],
+  },
+};
+
+// 탭이 다시 로드돼도 승인 대기를 이어가도록 표시해 둬요. (Grok은 서버가 대기 중인 코드를 기억해요)
+function rememberDevice(name, on) {
+  try { if (on) sessionStorage.setItem("device:" + name, "1"); else sessionStorage.removeItem("device:" + name); } catch (e) {}
 }
 
-function codexPanel() {
-  const f = flows.codex;
+function devicePanel(name) {
+  const f = flows.device[name];
   if (!f) return null;
   return el("div", { class: "panel" },
-    el("ol", { class: "steps" },
-      el("li", {}, "아래 코드를 복사하세요."),
-      el("li", {}, "OpenAI 페이지를 열고 로그인한 뒤 코드를 입력하세요."),
-      el("li", {}, "승인이 끝나면 이 화면이 자동으로 바뀌어요.")),
+    el("ol", { class: "steps" }, DEVICE[name].steps.map((t) => el("li", {}, t))),
     f.user_code ? el("div", { class: "code" }, f.user_code) : null,
-    f.url ? el("a", { class: "primary", href: f.url, target: "_blank", rel: "noopener" }, "OpenAI 로그인 열기") : null,
+    f.url ? el("a", { class: "primary", href: f.url, target: "_blank", rel: "noopener noreferrer" }, DEVICE[name].site + " 로그인 열기") : null,
     el("div", { class: f.error ? "err" : "note" }, f.error || f.status),
-    f.error ? el("button", { class: "secondary", onclick: () => startCodex() }, "다시 시도") : null);
+    f.error ? el("button", { class: "secondary", onclick: () => startDevice(name) }, "다시 시도") : null);
 }
 
-async function startCodex() {
-  flows.codex = { status: "준비 중…" };
+function showDevice(name, r) {
+  const f = { user_code: r.user_code, url: r.url, interval: r.interval, status: "승인을 기다리는 중…",
+    started: Date.now(), expires: r.expires_at ? r.expires_at * 1000 : Date.now() + 15 * 60 * 1000 };
+  flows.device[name] = f;
+  rememberDevice(name, true);
+  render();
+  setTimeout(() => pollDevice(name, f), Math.max(3, f.interval || 5) * 1000);
+}
+
+async function startDevice(name) {
+  const f = { status: "준비 중…" };
+  flows.device[name] = f;
   render();
   try {
-    const r = await api("/api/codex/start", { method: "POST", body: "{}" });
-    flows.codex = { ...r, status: "승인을 기다리는 중…", started: Date.now() };
-    render();
-    setTimeout(pollCodex, 5000);
+    const r = await api("/api/" + name + "/start", { method: "POST", body: "{}" });
+    if (r.error) throw new Error(r.error);
+    if (flows.device[name] === f) showDevice(name, r);
   } catch (e) {
-    flows.codex = { error: e.message };
-    render();
+    if (flows.device[name] === f) { flows.device[name] = { error: e.message }; render(); }
   }
 }
 
-async function pollCodex() {
-  const f = flows.codex;
-  if (!f || f.error || !f.started) return;
-  if (Date.now() - f.started > 15 * 60 * 1000) { f.error = "시간이 지났어요. 다시 시도해 주세요."; render(); return; }
+// f: 이 확인을 시작한 연결 시도. 그 사이 다시 시작했거나 해제했으면 그만둬요.
+async function pollDevice(name, f) {
+  if (flows.device[name] !== f || f.error) return;
+  if (Date.now() > f.expires) { f.error = "시간이 지났어요. 다시 시도해 주세요."; rememberDevice(name, false); render(); return; }
   try {
-    const p = await api("/api/codex/poll", { method: "POST", body: "{}" });
-    if (!p.pending) {
-      flows.codex = null;
+    const p = await api("/api/" + name + "/poll", { method: "POST", body: "{}" });
+    if (flows.device[name] !== f) return;
+    if (p.error && p.terminal) { f.error = p.error; rememberDevice(name, false); render(); return; }
+    if (p.error) { f.status = p.error; render(); }
+    else if (!p.pending) {
+      delete flows.device[name];
+      rememberDevice(name, false);
       await new Promise((r) => setTimeout(r, 1500));
       await load(false);
       return;
+    } else {
+      if (p.interval) f.interval = p.interval;
+      if (f.status !== "승인을 기다리는 중…") { f.status = "승인을 기다리는 중…"; render(); }
     }
   } catch (e) { f.error = e.message; render(); return; }
-  setTimeout(pollCodex, Math.max(3, f.interval || 5) * 1000);
+  setTimeout(() => pollDevice(name, f), Math.max(3, f.interval || 5) * 1000);
+}
+
+// 탭이 다시 로드됐을 때, 승인을 기다리던 Grok 연결이 있으면 이어서 확인해요.
+async function resumeDevice(name) {
+  let waiting = false;
+  try { waiting = sessionStorage.getItem("device:" + name) === "1"; } catch (e) {}
+  if (!waiting || flows.device[name]) return;
+  try {
+    const p = await api("/api/" + name + "/poll", { method: "POST", body: "{}" });
+    if (p.pending && p.user_code) return showDevice(name, p);
+    rememberDevice(name, false);
+    if (p.ok) load(false);
+  } catch (e) { rememberDevice(name, false); }
 }
 
 function connectButton(name, label) {
-  if (name === "grok") return el("a", { class: "primary-sm", href: "/grok" }, label);
-  return name === "claude" ? claudeButton(label) : codexButton(label);
+  if (name === "claude") return claudeButton(label);
+  return el("button", { class: "primary-sm", onclick: () => startDevice(name) }, label);
 }
 
 function connectPanel(name) {
-  if (name === "grok") return null;
-  return name === "claude" ? claudePanel() : codexPanel();
+  return name === "claude" ? claudePanel() : devicePanel(name);
 }
 
 // ---- 카드 ----
@@ -340,7 +377,7 @@ function connectPanel(name) {
 function renderFoot(name, s) {
   const u = s.usage || {};
   const meta = [];
-  if (u.fetched_at) meta.push("마지막 성공: " + ago(u.fetched_at));
+  if (u.fetched_at) meta.push("최근 갱신: " + ago(u.fetched_at));
   if (s.relay) meta.push("GitHub Actions로 갱신");
   const foot = el("div", { class: "foot" });
   if (meta.length) foot.append(el("span", { class: "meta" }, meta.join(" · ")));
@@ -348,10 +385,8 @@ function renderFoot(name, s) {
   if (name === "codex") {
     const n = relayWaitNote();
     if (n) foot.append(n);
-    const last = Math.max(u.fetched_at || 0, u.error_at || 0);
-    if (s.relay && last && Date.now() / 1000 - last > 45 * 60) {
-      foot.append(el("span", { class: "err" }, "GitHub Actions가 " + ago(last) + " 이후로 실행되지 않았어요. 레포의 Actions 탭을 확인해 주세요."));
-    }
+    const stale = s.relay && relayStaleNote(u);
+    if (stale) foot.append(stale);
   }
   if (s.usage && !u.ok && u.error) {
     foot.append(el("span", { class: "err" }, u.needs_reconnect ? "로그인이 만료됐어요. 다시 연결해 주세요. (" + u.error + ")" : "갱신 실패: " + u.error));
@@ -382,6 +417,13 @@ function renderFoot(name, s) {
   return foot;
 }
 
+// GitHub Actions가 갱신하는 서비스(Codex·Gemini)의 값이 45분 넘게 그대로일 때 알려줘요.
+function relayStaleNote(u) {
+  const last = Math.max(u.fetched_at || 0, u.error_at || 0);
+  if (!last || Date.now() / 1000 - last <= 45 * 60) return null;
+  return el("span", { class: "err" }, "GitHub Actions가 " + ago(last) + " 이후로 실행되지 않았어요. 레포의 Actions 탭을 확인해 주세요.");
+}
+
 function logoEl(meta) {
   const img = el("img", { class: "logo", src: meta.logo, alt: "", referrerpolicy: "no-referrer" });
   // 로고를 못 받아오면 디자인 시안의 색 점으로 대신해요.
@@ -403,7 +445,7 @@ function renderCard(name) {
 
   if (!s.connected) {
     card.append(el("div", { class: "status-row" },
-      el("span", { class: "status-text" }, "연결되지 않음"),
+      el("span", { class: "status-text" }, "연결 안 됨"),
       connectButton(name, name === "claude" && flows.claudeOpen ? "로그인 열기" : "연결하기")));
     const p = connectPanel(name);
     if (p) card.append(p);
@@ -411,13 +453,13 @@ function renderCard(name) {
   }
 
   if (u && u.windows && u.windows.length) {
-    card.append(el("div", { class: "windows" }, (name === "grok" ? u.windows.filter((w) => w.label === "주간") : u.windows).map(renderWindow)));
+    card.append(el("div", { class: "windows" }, u.windows.map(renderWindow)));
   } else if (!u) {
     card.append(el("p", { class: "empty" }, s.relay
-      ? "GitHub Actions의 첫 조회를 기다리는 중이에요. 레포 → Actions → 'Codex·Gemini 사용량 중계' → Run workflow로 바로 실행할 수 있어요."
-      : "아직 데이터가 없어요. 새로고침을 눌러보세요."));
+      ? "GitHub Actions의 첫 갱신을 기다리는 중이에요. 레포 → Actions → 'Codex·Gemini 사용량 중계' → Run workflow로 바로 실행할 수 있어요."
+      : "아직 사용량이 없어요. 새로고침을 눌러보세요."));
   } else {
-    card.append(el("p", { class: "empty" }, "한도 정보가 없어요."));
+    card.append(el("p", { class: "empty" }, "사용량 정보가 없어요."));
   }
   card.append(renderFoot(name, s));
   return card;
@@ -430,14 +472,17 @@ function renderGeminiCard(card, s) {
   if (s.connected && u && u.windows && u.windows.length) {
     card.append(el("div", { class: "windows" }, u.windows.map(renderWindow)));
   } else {
-    card.append(el("p", { class: "empty" }, s.connected ? "사용량을 아직 가져오지 못했어요." : "자동 조회 설정이 필요해요."));
+    card.append(el("p", { class: "empty" }, s.connected ? "아직 사용량이 없어요." : "연결 안 됨"));
   }
   const foot = el("div", { class: "foot" });
-  if (u && u.fetched_at) foot.append(el("span", { class: "meta" }, "마지막 성공: " + ago(u.fetched_at)));
-  if (u && !u.ok && s.connected) foot.append(el("span", { class: "err" }, u.error || "갱신 실패"));
-  if (s.connected && u && Date.now() / 1000 - Math.max(u.fetched_at || 0, u.error_at || 0) > 2700) {
-    foot.append(el("span", { class: "err" }, "중계가 오래 갱신되지 않았어요. GitHub Actions를 확인해 주세요."));
-  }
+  const meta = [];
+  if (u && u.fetched_at) meta.push("최근 갱신: " + ago(u.fetched_at));
+  if (s.connected) meta.push("GitHub Actions로 갱신");
+  if (meta.length) foot.append(el("span", { class: "meta" }, meta.join(" · ")));
+  // 로그인 만료 안내는 쿠키를 바꾸는 방법까지 담고 있어서 그대로 보여줘요.
+  if (u && !u.ok && s.connected) foot.append(el("span", { class: "err" }, u.needs_reconnect ? u.error : "갱신 실패: " + (u.error || "")));
+  const stale = s.connected && u && relayStaleNote(u);
+  if (stale) foot.append(stale);
   const waiting = relayWaitNote("gemini");
   if (waiting) foot.append(waiting);
   if (!s.connected || (u && u.needs_reconnect)) {
@@ -560,7 +605,7 @@ function scheduleRelayCheck() {
     if (wait.error) continue;
     const u = state && state[name] && state[name].usage;
     if (u && Math.max(u.fetched_at || 0, u.error_at || 0) >= wait.since) delete relayWait[name];
-    else if (Date.now() > wait.until) relayWait[name] = { error: "조회 결과가 아직 도착하지 않았어요. 잠시 뒤 다시 확인해 주세요." };
+    else if (Date.now() > wait.until) relayWait[name] = { error: "갱신 결과가 아직 도착하지 않았어요. 잠시 뒤 다시 확인해 주세요." };
     else pending = true;
   }
   if (pending) scheduleRelayCheck.t = setTimeout(() => load(false), 8000);
@@ -570,12 +615,14 @@ function relayWaitNote(name = "codex") {
   const wait = relayWait[name];
   if (!wait) return null;
   if (wait.error) return el("span", { class: "err" }, wait.error);
-  return el("span", { class: "note" }, "GitHub Actions로 새로 조회하는 중… (보통 1~2분)");
+  return el("span", { class: "note" }, "GitHub Actions로 갱신하는 중… (보통 1~2분)");
 }
 
 async function disconnect(name) {
   ui.confirm = null;
   ui.raw[name] = false;
+  delete flows.device[name];
+  rememberDevice(name, false);
   await api("/api/" + name + "/disconnect", { method: "POST", body: "{}" });
   load(false);
 }
@@ -591,11 +638,11 @@ $("#logout").addEventListener("click", logout);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !flows.claudeBusy) load(false); });
 setInterval(tickResets, 15000);
 // 최신 서버 상태를 읽고, 중계 데이터가 오래됐으면 서버가 조회를 요청해요.
-setInterval(() => { if (!document.hidden && !flows.claudeBusy && !flows.claudeOpen && !flows.codex) load(false); }, 60000);
+setInterval(() => { if (!document.hidden && !flows.claudeBusy && !flows.claudeOpen && !Object.keys(flows.device).length) load(false); }, 60000);
 // 위젯의 새로고침 아이콘은 /?refresh=1로 열려요. 바로 새로 조회하고 주소는 원래대로 돌려놔요.
 const fromWidget = new URLSearchParams(location.search).get("refresh") === "1";
 if (fromWidget) history.replaceState(null, "", "/");
-load(fromWidget);
+load(fromWidget).then(() => resumeDevice("grok"));
 `;
 
 const LOGIN_SCRIPT = `
@@ -636,7 +683,7 @@ function shell(body, script = "") {
 </html>`;
 }
 
-const TITLE = `<div class="top-text"><h1>AI 사용량</h1><p class="subtitle">Claude·Codex·Gemini 사용량</p></div>`;
+const TITLE = `<div class="top-text"><h1>AI 사용량</h1><p class="subtitle">Claude·Codex·Gemini·Grok 사용량</p></div>`;
 
 export function renderPage({ authed, setupMissing }) {
   if (setupMissing) {
@@ -670,7 +717,7 @@ export function renderPage({ authed, setupMissing }) {
   <button id="refresh" class="refresh">새로고침</button>
 </header>
 <div id="cards" class="cards"><p class="empty">불러오는 중…</p></div>
-<div class="bottom"><a class="text-btn" href="/grok">Grok 연결·사용량</a> · <button id="logout" class="text-btn">로그아웃</button></div>`,
+<div class="bottom"><button id="logout" class="text-btn">로그아웃</button></div>`,
     SCRIPT
   );
 }

@@ -30,25 +30,30 @@ test('Grok phone login, concurrent polls, automatic refresh, failure cache and d
     assert.equal((await mf.dispatchFetch('https://worker.test/api/grok/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,401);
     assert.equal((await mf.dispatchFetch('https://worker.test/api/grok/start',{method:'POST',headers:{Cookie:'uc_session=s'},body:'{}'})).status,415);
     assert.equal(deviceCalls,0);
-    assert.equal((await mf.dispatchFetch('https://worker.test/grok',{headers:{Cookie:'uc_session=s'}})).status,200);
+    // 예전 Grok 전용 화면 주소는 로그인 여부와 상관없이 대시보드로 보내요 (JSON 오류 화면이 뜨지 않게).
+    for(const headers of [{},{Cookie:'uc_session=s'}]) { const old=await mf.dispatchFetch('https://worker.test/grok',{headers,redirect:'manual'});
+      assert.equal(old.status,302);assert.equal(old.headers.get('Location'),'https://worker.test/'); }
+    // 대시보드가 쓰는 /api/usage로 상태를 확인해요. refresh=1은 지금 바로 다시 조회해요.
+    const usage=async(refresh=false)=>(await (await mf.dispatchFetch('https://worker.test/api/usage'+(refresh?'?refresh=1':''),{headers:{Cookie:'uc_session=s'}})).json()).grok;
     const starts=await Promise.all([api('start'),api('start')]);const start=await starts[0].json();await starts[1].json();
     assert.equal(deviceCalls,1,JSON.stringify(start));assert.equal(start.pending,true);assert.ok(!JSON.stringify(start).includes('private-device'));
     assert.equal((await (await api('poll')).json()).pending,true);assert.equal(tokenCalls,0);
     await new Promise(resolve=>setTimeout(resolve,1100));
     const polls=await Promise.all([api('poll'),api('poll')]);for(const p of polls) assert.equal((await p.json()).ok,true);
     assert.equal(tokenCalls,1);
-    let status=await (await api('status','GET')).json();assert.equal(status.connected,true);assert.equal(status.usage.windows[0].used_percent,8);
+    let status=await usage();assert.equal(status.connected,true);assert.equal(status.usage.windows[0].used_percent,8);
     assert.ok(!JSON.stringify(status).includes('private-'));
     // The token manager must refresh only once even when two requests see an expired token.
     const t=await store.read('grok');await store.write('grok',{...t,expires_at:1});
-    await Promise.all([api('refresh'),api('refresh')]);assert.equal(refreshCalls,1);
-    const good=(await (await api('status','GET')).json()).usage;
-    billingFailure=true;status=await (await api('refresh')).json();assert.equal(status.usage.ok,false);
+    await Promise.all([usage(true),usage(true)]);assert.equal(refreshCalls,1);
+    const good=(await usage()).usage;
+    billingFailure=true;status=await usage(true);assert.equal(status.usage.ok,false);
+    assert.equal(status.usage.error,'사용량 조회 실패: HTTP 503');
     assert.equal(status.usage.fetched_at,good.fetched_at);assert.equal(status.usage.windows[0].used_percent,8);assert.ok(!JSON.stringify(status).includes('private-error'));
     billingFailure=false;
     const widget=await (await mf.dispatchFetch('https://worker.test/api/widget?key=w&refresh=1&force=1')).json();
     assert.equal(widget.grok.windows[0].used_percent,8);assert.equal(widget.grok.ok,true);assert.ok(!JSON.stringify(widget).includes('private-'));
     assert.ok(billingCalls>=4);
-    await api('disconnect');status=await (await api('status','GET')).json();assert.equal(status.connected,false);assert.equal(status.usage,null);assert.equal(await store.read('grok'),null);
+    await api('disconnect');status=await usage();assert.equal(status.connected,false);assert.equal(status.usage,null);assert.equal(await store.read('grok'),null);
   } finally {await mf.dispose();}
 });
