@@ -1,3 +1,5 @@
+import { BRAND_LOGOS } from "./brand-logos.js";
+
 export const ICON_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0C0D10"/><rect x="14" y="34" width="9" height="18" rx="3" fill="#D97757"/><rect x="28" y="22" width="9" height="30" rx="3" fill="#2DC8A8"/><rect x="42" y="12" width="9" height="40" rx="3" fill="#8B8E96"/></svg>';
 
@@ -133,10 +135,12 @@ textarea:focus, input:focus { border-color: rgba(255,255,255,.28); }
 
 const SCRIPT = `
 const $ = (s) => document.querySelector(s);
+const BRAND_LOGOS = ${JSON.stringify(BRAND_LOGOS)};
 const PROVIDERS = {
-  claude: { title: "Claude", color: "var(--claude)", logo: "https://www.google.com/s2/favicons?domain=claude.ai&sz=128" },
-  gemini: { title: "Gemini", color: "var(--gemini)", logo: "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=128" },
-  codex: { title: "Codex", color: "var(--codex)", logo: "https://www.google.com/s2/favicons?domain=openai.com&sz=128" },
+  claude: { title: "Claude", color: "var(--claude)", logo: BRAND_LOGOS.claude },
+  gemini: { title: "Gemini", color: "var(--gemini)", logo: BRAND_LOGOS.gemini },
+  grok: { title: "Grok", color: "var(--text)", logo: BRAND_LOGOS.grok },
+  codex: { title: "Codex", color: "var(--codex)", logo: BRAND_LOGOS.codex },
 };
 let state = null;
 
@@ -322,10 +326,12 @@ async function pollCodex() {
 }
 
 function connectButton(name, label) {
+  if (name === "grok") return el("a", { class: "primary-sm", href: "/grok" }, label);
   return name === "claude" ? claudeButton(label) : codexButton(label);
 }
 
 function connectPanel(name) {
+  if (name === "grok") return null;
   return name === "claude" ? claudePanel() : codexPanel();
 }
 
@@ -405,7 +411,7 @@ function renderCard(name) {
   }
 
   if (u && u.windows && u.windows.length) {
-    card.append(el("div", { class: "windows" }, u.windows.map(renderWindow)));
+    card.append(el("div", { class: "windows" }, (name === "grok" ? u.windows.filter((w) => w.label === "주간") : u.windows).map(renderWindow)));
   } else if (!u) {
     card.append(el("p", { class: "empty" }, s.relay
       ? "GitHub Actions의 첫 조회를 기다리는 중이에요. 레포 → Actions → 'Codex·Gemini 사용량 중계' → Run workflow로 바로 실행할 수 있어요."
@@ -510,7 +516,7 @@ function render() {
   if (!state) return;
   const active = document.activeElement;
   const wasTyping = active && active.tagName === "TEXTAREA" && !active.readOnly;
-  $("#cards").replaceChildren(...["claude", "codex", "gemini"].map(renderCard), renderWidgetCard());
+  $("#cards").replaceChildren(...["claude", "codex", "gemini", "grok"].map(renderCard), renderWidgetCard());
   if (wasTyping) { const t = document.querySelector(".panel textarea"); if (t) t.focus(); }
   tickResets();
 }

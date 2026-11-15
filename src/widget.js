@@ -1,3 +1,5 @@
+import { BRAND_LOGOS } from "./brand-logos.js";
+
 // iOS 홈 화면 위젯용 Scriptable 스크립트를 만들어요.
 // 대시보드의 "iOS 위젯" 칸에서 복사해 Scriptable 앱에 붙여넣으면 돼요.
 export function widgetScript(origin, key) {
@@ -12,44 +14,41 @@ const MANUAL = !config.runsInWidget && args.queryParameters && args.queryParamet
 
 // 대시보드와 같은 색이에요 (다크 테마 전용, Claude Design 시안 기준).
 const C = {
-  bg: new Color("#15171B"),      // 대시보드 카드 배경
+  bg: new Color("#1B1C1E"),      // 대시보드 카드 배경
+  card: new Color("#232426"),
   text: new Color("#ECEDEF"),    // 제목
   label: new Color("#C9CBD1"),   // 항목 이름 (5시간, 주간)
   muted: new Color("#9A9DA5"),   // 남은 시간, 시각
-  track: new Color("#24272D"),   // 막대 바탕
-  ok: new Color("#3DD68C"),
+  track: new Color("#343539"),   // 막대 바탕
+  ok: new Color("#6CD18C"),
   warn: new Color("#F2B544"),
   bad: new Color("#F06B5F"),
   claude: new Color("#D97757"),
   codex: new Color("#2DC8A8"),
   gemini: new Color("#8AB4F8"),
+  grok: new Color("#ECEDEF"),
 };
 
-// 위젯 크기별 글자·막대 크기. 작은 위젯은 세로로 쌓고, 중간·큰 위젯은 서비스마다 한 줄씩 그려요.
+// 중간·큰 위젯은 사진처럼 2×2 카드. 작은 위젯은 선택한 서비스만 세로로 표시해요.
 const SIZES = {
   small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4 },
-  medium: { width: 100, brandWidth: 70, name: 11, label: 9, pct: 15, bar: 4, timer: 8.5, rowGap: 7 },
-  large: { width: 100, brandWidth: 70, name: 12, label: 10, pct: 18, bar: 6, timer: 10, rowGap: 18 },
+  medium: { name: 10, label: 8, pct: 10, bar: 2, timer: 7, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 9, radius: 13 },
+  large: { name: 15, label: 12, pct: 20, bar: 5, timer: 10, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 11, radius: 22 },
 };
 
-const LOGOS = {
-  claude: "https://www.google.com/s2/favicons?domain=claude.ai&sz=128",
-  codex: "https://www.google.com/s2/favicons?domain=openai.com&sz=128",
-  gemini: "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=128",
-};
+// 로고를 스크립트에 함께 넣어서 네트워크나 이미지 캐시 없이 표시해요.
+const LOGOS = ${JSON.stringify(BRAND_LOGOS)};
+function logo(name) {
+  return Image.fromData(Data.fromBase64String(LOGOS[name].split(",")[1]));
+}
 
-// 로고는 한 번 받아서 기기에 저장해 두고 다시 써요.
-async function logo(name) {
-  const fm = FileManager.local();
-  const path = fm.joinPath(fm.cacheDirectory(), "usage-check-logo-" + name + ".png");
-  if (fm.fileExists(path)) return fm.readImage(path);
-  try {
-    const img = await new Request(LOGOS[name]).loadImage();
-    fm.writeImage(path, img);
-    return img;
-  } catch (e) {
-    return null;
-  }
+function gridSize(family) {
+  let screen = 390;
+  try { const size = Device.screenSize(); screen = Math.min(size.width, size.height); } catch (e) {}
+  // Scriptable의 iPhone 위젯 크기(pt). iPad/알 수 없는 기기는 보수적인 크기를 사용해요.
+  const sizes = screen <= 320 ? [292, 141, 311] : screen <= 375 ? [329, 155, 345]
+    : screen <= 393 ? [338, 158, 354] : screen <= 414 ? [360, 169, 379] : [364, 170, 382];
+  return { width: sizes[0], height: family === "large" ? sizes[2] : sizes[1] };
 }
 
 // 위젯이 다시 그려질 때마다 서버가 오래된 값을 새로 조회해요. 버튼으로 실행하면 간격 제한 없이 바로 조회해요.
@@ -161,7 +160,7 @@ function addProvider(parent, name, color, icon, p, S, withRefresh) {
   }
 }
 
-// 한 서비스가 한 행을 차지하고, 5시간·주간 칸은 항상 같은 위치에 표시해요.
+// 카드 안에서는 라벨·초기화까지 남은 시간·퍼센트를 한 줄에 놓아요.
 function addUsageCell(parent, label, w, p, S) {
   const cell = parent.addStack();
   cell.layoutVertically();
@@ -170,6 +169,10 @@ function addUsageCell(parent, label, w, p, S) {
   top.layoutHorizontally();
   top.bottomAlignContent();
   addText(top, label, Font.mediumSystemFont(S.label), C.label);
+  top.addSpacer(4);
+  const caption = !p?.connected ? "연결 안 됨" : !w ? "제공 안 됨" : remain(w.resets_at) || "초기화 정보 없음";
+  const timer = addText(top, caption, Font.systemFont(S.timer), C.muted);
+  timer.minimumScaleFactor = 0.65;
   top.addSpacer();
   const value = w && Number.isFinite(w.used_percent) ? Math.max(0, Math.min(100, w.used_percent)) : null;
   const color = value === null ? C.muted : levelColor(value);
@@ -177,56 +180,51 @@ function addUsageCell(parent, label, w, p, S) {
   if (value !== null) addText(top, "%", Font.mediumSystemFont(S.label), color);
   cell.addSpacer(1);
   const bar = cell.addStack();
+  bar.layoutHorizontally();
   bar.size = new Size(S.width, S.bar);
   bar.backgroundColor = C.track;
   bar.cornerRadius = S.bar / 2;
-  if (value > 0) {
+  if (value !== null) {
     const fill = bar.addStack();
-    fill.size = new Size(Math.max(4, S.width * value / 100), S.bar);
+    fill.size = new Size(Math.max(S.bar, S.width * value / 100), S.bar);
     fill.backgroundColor = color;
     fill.cornerRadius = S.bar / 2;
   }
   bar.addSpacer();
-  cell.addSpacer(2);
-  const caption = !p?.connected ? "연결 안 됨" : !w ? "제공 안 됨" : remain(w.resets_at) || "초기화 정보 없음";
-  const timer = addText(cell, caption, Font.systemFont(S.timer), C.muted);
-  timer.minimumScaleFactor = 0.8;
 }
 
-function addProviderRow(parent, name, color, icon, p, S) {
-  const row = parent.addStack();
-  row.layoutHorizontally();
-  row.centerAlignContent();
-  const brand = row.addStack();
-  brand.layoutVertically();
-  brand.size = new Size(S.brandWidth, 0);
-  const title = brand.addStack();
-  title.centerAlignContent();
-  if (icon) {
-    const img = title.addImage(icon);
-    img.imageSize = new Size(S.name + 3, S.name + 3);
-    img.cornerRadius = 3;
-  } else addText(title, "●", Font.systemFont(S.name - 3), color);
-  title.addSpacer(5);
-  const text = addText(title, name, Font.boldSystemFont(S.name), C.text);
-  text.minimumScaleFactor = 0.8;
-  // 홈 화면 위젯은 iOS가 다시 그릴 때까지 그대로 남아서, 잠깐 지나가는 "갱신 중" 상태는 표시하지 않아요.
-  // (중계는 보통 20초 안에 끝나는데, 그 순간이 찍히면 몇십 분씩 "갱신 중"으로 남아 있었어요.)
-  // 실제 문제가 있을 때만 표시해요.
+function addProviderCard(parent, id, title, icon, p, S, width, height) {
+  const card = parent.addStack();
+  card.layoutVertically();
+  card.size = new Size(width, height);
+  card.backgroundColor = C.card;
+  card.cornerRadius = S.radius;
+  card.setPadding(S.pad, S.pad, S.pad, S.pad);
+  const h = card.addStack();
+  h.layoutHorizontally();
+  h.centerAlignContent();
+  const img = h.addImage(icon);
+  img.imageSize = new Size(S.icon, S.icon);
+  img.cornerRadius = S.icon / 4;
+  h.addSpacer(6);
+  addText(h, title, Font.boldSystemFont(S.name), C.text);
+  h.addSpacer();
   const stale = p?.fetched_at && Date.now() / 1000 - p.fetched_at > 2700;
   if (p?.connected && (p.ok === false || stale)) {
-    brand.addSpacer(3);
-    addText(brand, p.ok === false ? "갱신 실패" : "오래된 데이터", Font.systemFont(S.timer), p.ok === false ? C.bad : C.warn);
+    const badge = SFSymbol.named("exclamationmark.circle");
+    const warning = h.addImage(badge.image);
+    warning.imageSize = new Size(S.label + 1, S.label + 1);
+    warning.tintColor = p.ok === false ? C.bad : C.warn;
   }
+  card.addSpacer();
   const windows = p?.connected ? p.windows || [] : [];
-  for (const label of ["5시간", "주간"]) {
-    // 서비스명 옆은 고정 간격으로 붙이고, 남는 너비는 두 사용량 칸 사이에 둬요.
-    if (label === "주간") row.addSpacer();
-    row.addSpacer(8);
-    // 다른 모델의 주간 한도를 전체 주간 한도로 대신 표시하지 않아요.
+  // Grok에는 5시간 줄과 빈 막대 자체를 만들지 않아요.
+  const labels = id === "grok" ? ["주간"] : ["5시간", "주간"];
+  labels.forEach((label, i) => {
+    if (i) card.addSpacer(S.rowGap);
     const w = windows.find((window) => shortLabel(window.label) === label);
-    addUsageCell(row, label, w, p, S);
-  }
+    addUsageCell(card, label, w, p, { ...S, width: width - S.pad * 2 });
+  });
 }
 
 // 현재 그린 시각이 아니라, 표시 중인 서비스의 실제 최근 수집 성공 시각이에요.
@@ -244,7 +242,7 @@ function addFooter(parent, S, updated) {
   const f = parent.addStack();
   f.layoutHorizontally();
   f.centerAlignContent();
-  addText(f, updated, Font.systemFont(Math.max(9, S.label - 2)), C.muted);
+  addText(f, updated, Font.systemFont(S.footer || Math.max(9, S.label - 2)), C.muted);
   f.addSpacer();
   addRefreshIcon(f, S, true);
 }
@@ -287,7 +285,7 @@ function relayNote(d) {
 async function manualRefresh() {
   const table = new UITable();
   table.showSeparators = true;
-  const rows = { claude: ["갱신 중…", ""], codex: ["갱신 중…", ""], gemini: ["갱신 중…", ""], foot: "" };
+  const rows = { claude: ["갱신 중…", ""], codex: ["갱신 중…", ""], gemini: ["갱신 중…", ""], grok: ["갱신 중…", ""], foot: "" };
   const draw = () => {
     table.removeAllRows();
     const head = new UITableRow();
@@ -295,7 +293,7 @@ async function manualRefresh() {
     head.height = 56;
     head.addText("AI 사용량 새로고침", clock() + " 기준").titleFont = Font.boldSystemFont(20);
     table.addRow(head);
-    for (const [name, title] of [["claude", "Claude"], ["codex", "Codex"], ["gemini", "Gemini"]]) {
+    for (const [name, title] of [["claude", "Claude"], ["codex", "Codex"], ["gemini", "Gemini"], ["grok", "Grok"]]) {
       const r = new UITableRow();
       r.height = 72;
       const cell = r.addText(title + "  " + rows[name][0], rows[name][1]);
@@ -323,6 +321,7 @@ async function manualRefresh() {
     rows.claude = ["불러오기 실패", data.error];
     rows.codex = ["", ""];
     rows.gemini = ["", ""];
+    rows.grok = ["", ""];
     draw();
     await shown;
     return;
@@ -330,6 +329,10 @@ async function manualRefresh() {
   rows.claude = data.claude.ok === false
     ? ["갱신 실패", "대시보드에서 확인해 주세요"]
     : [summary(data.claude), "갱신됨 " + clock(data.claude.fetched_at)];
+
+  rows.grok = data.grok?.ok === false
+    ? [summary(data.grok), "갱신 실패 · 대시보드에서 확인해 주세요"]
+    : [summary(data.grok), data.grok?.fetched_at ? "갱신됨 " + clock(data.grok.fetched_at) : "대시보드에서 연결해 주세요"];
 
   const pending = new Set();
   let latest = data;
@@ -372,15 +375,18 @@ async function manualRefresh() {
 if (MANUAL) {
   await manualRefresh();
 } else {
-  const [data, claudeLogo, codexLogo, geminiLogo] = await Promise.all([load(), logo("claude"), logo("codex"), logo("gemini")]);
+  const data = await load();
   const family = config.widgetFamily || "medium";
-  const icons = { claude: claudeLogo, codex: codexLogo, gemini: geminiLogo };
-  const titles = { claude: "Claude", codex: "Codex", gemini: "Gemini" };
+  const icons = Object.fromEntries(Object.keys(LOGOS).map((name) => [name, logo(name)]));
+  const titles = { claude: "Claude", codex: "Codex", gemini: "Gemini", grok: "Grok" };
   // 작은 위젯은 기존 두 서비스를 유지해요. Parameter에 gemini를 넣으면 Gemini 전용으로 쓸 수 있어요.
   const requested = String(args.widgetParameter || "").toLowerCase().split(",").map((v) => v.trim()).filter((v) => Object.keys(titles).includes(v));
-  const defaults = family === "small" ? ["claude", "codex"] : ["claude", "codex", ...(data.gemini && data.gemini.connected ? ["gemini"] : [])];
-  const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 3);
-  const S = SIZES[family] || SIZES.medium;
+  const defaults = family === "small" ? ["claude", "codex"] : ["claude", "codex", "gemini", "grok"];
+  const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 4);
+  const S = { ...(SIZES[family] || SIZES.medium) };
+  if (family !== "small" && family !== "large" && gridSize(family).width <= 292) {
+    Object.assign(S, { pad: 4, name: 9, label: 7.5, pct: 9, icon: 11, timer: 6 });
+  }
   const widget = new ListWidget();
   const updated = lastUpdated(data, names);
   widget.backgroundColor = C.bg;
@@ -403,17 +409,24 @@ if (MANUAL) {
       addProvider(widget, titles[name], C[name], icons[name], data[name], S, i === 0);
     });
   } else {
-    // 둥근 모서리에 닿지 않도록 상단 수치와 하단 시각·새로고침을 안쪽에 둬요.
-    widget.setPadding(14, 18, 14, 20);
-    names.forEach((name, i) => {
-      if (i) {
-        widget.addSpacer(S.rowGap);
-        widget.addSpacer();
-      }
-      addProviderRow(widget, titles[name], C[name], icons[name], data[name], S);
-    });
-    widget.addSpacer(5);
-    widget.addSpacer();
+    const size = gridSize(family);
+    const outerX = family === "large" ? 14 : 12;
+    const outerY = family === "large" ? 14 : 9;
+    widget.setPadding(outerY, outerX, outerY, outerX);
+    const columns = names.length === 1 ? 1 : 2;
+    const rows = Math.ceil(names.length / columns);
+    const cardWidth = (size.width - outerX * 2 - S.gap * (columns - 1)) / columns;
+    const cardHeight = (size.height - outerY * 2 - Math.max(S.footer + 3, S.name + 3) - S.gap * rows) / rows;
+    for (let i = 0; i < rows; i++) {
+      if (i) widget.addSpacer(S.gap);
+      const row = widget.addStack();
+      row.layoutHorizontally();
+      names.slice(i * columns, (i + 1) * columns).forEach((name, j) => {
+        if (j) row.addSpacer(S.gap);
+        addProviderCard(row, name, titles[name], icons[name], data[name], S, cardWidth, cardHeight);
+      });
+    }
+    widget.addSpacer(S.gap);
     addFooter(widget, S, updated);
   }
 
@@ -423,3 +436,4 @@ if (MANUAL) {
 Script.complete();
 `;
 }
+

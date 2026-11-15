@@ -10,7 +10,7 @@ Claude·Codex·Gemini 앱의 **사용 한도(5시간·주간)를 휴대폰에서
 | **Claude** (Pro/Max) | 5시간 한도, 주간 한도. 앱·웹·Claude Code 사용량이 모두 합쳐진 값이에요 |
 | **Codex** (ChatGPT 플랜) | Codex 5시간·주간 한도 (CLI·클라우드·IDE 공용). ChatGPT 일반 채팅 한도는 아니에요 |
 | **Gemini 앱** | 앱의 5시간·주간 한도. Google 로그인 쿠키를 GitHub Secret에 별도로 등록해야 해요 |
-| **Grok** | 구독 공용 주간 사용률과 초기화 시각. 대시보드 아래 **Grok 연결·사용량**에서 아이폰으로 로그인·승인해요. 기존 위젯 디자인은 그대로예요 |
+| **Grok** | 구독 공용 주간 사용률과 초기화 시각. 대시보드 아래 **Grok 연결·사용량**에서 아이폰으로 로그인·승인해요. 메인 화면과 2×2 위젯에 주간 한도만 표시해요 |
 
 - 15분마다 자동 갱신 (Claude는 Cloudflare, Codex·Gemini는 GitHub Actions가 조회)
 - 사용량에 따라 색이 바뀌어요 (50% 이상 노랑, 80% 이상 빨강)

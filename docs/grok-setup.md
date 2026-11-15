@@ -16,7 +16,8 @@
 - 응답의 `config.creditUsagePercent`는 이미 백분율이에요. `currentPeriod.type`이 `USAGE_PERIOD_TYPE_WEEKLY`인지 검증해요. 응답에 없는 5시간 한도나 사용률을 0으로 만들지 않아요.
 - Cloudflare의 기존 15분 예약 작업에 포함돼요. Grok 연결 화면과 위젯 조회 요청에서는 마지막 조회가 10분 이상 지난 경우 다시 조회해요. 수동 갱신은 즉시 조회해요.
 - 조회 실패 때 마지막 성공값과 성공 시각을 보존하고 오류를 함께 보여줘요.
-- `/api/usage`, `/api/widget` 응답에 `grok` 데이터가 추가돼요. `src/widget.js`와 기존 위젯의 배치는 변경하지 않았어요.
+- 메인 대시보드와 `/api/usage`, `/api/widget` 응답에 Grok 주간 사용량이 표시돼요. 중간·큰 위젯은 Claude·Codex / Gemini·Grok의 2×2 카드이며, Grok에는 주간 항목만 표시해요. 로고는 스크립트에 포함돼요.
+- 위젯 디자인을 적용하려면 사이트의 **iOS 위젯 → 위젯 스크립트 복사**를 눌러 기존 Scriptable 스크립트를 교체하세요. Parameter가 비어 있으면 네 카드가 모두 표시되고, `grok`을 넣으면 Grok만 표시돼요.
 
 ## 구현 근거와 검증 범위
 
