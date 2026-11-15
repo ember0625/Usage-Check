@@ -12,7 +12,7 @@ const REFRESH = "scriptable:///run/" + encodeURIComponent(Script.name()) + "?ref
 // 새로고침 버튼으로 실행됐는지 (앱 안에서 실행될 때만 true)
 const MANUAL = !config.runsInWidget && args.queryParameters && args.queryParameters.refresh === "1";
 
-// Fluent 참고 시안: 차분한 표면·테두리, 사용량 단계별 주황·노랑·빨강.
+// Fluent 참고 시안: 차분한 표면·테두리, 사용량 단계별 초록·주황·빨강.
 const C = {
   bg: new Color("#1B1D20"),      // 대시보드 카드 배경
   card: new Color("#232426"),
@@ -22,8 +22,8 @@ const C = {
   label: new Color("#E2E4E8"),   // 항목 이름 (5시간, 주간)
   muted: new Color("#AFB3BC"),   // 남은 시간, 시각
   track: new Color("#444851"),   // 막대 바탕
-  ok: new Color("#EEA15C"),
-  warn: new Color("#F2D264"),
+  ok: new Color("#6CD18C"),
+  warn: new Color("#EEA15C"),
   bad: new Color("#F06B5F"),
   claude: new Color("#D97757"),
   codex: new Color("#2DC8A8"),
@@ -66,7 +66,7 @@ async function load(query = "&refresh=1" + (MANUAL ? "&force=1" : "")) {
   }
 }
 
-// 50% 미만 주황, 50% 이상 노랑, 80% 이상 빨강
+// 50% 미만 초록, 50% 이상 주황, 80% 이상 빨강
 function levelColor(p) {
   return p >= 80 ? C.bad : p >= 50 ? C.warn : C.ok;
 }
@@ -173,9 +173,10 @@ function addUsageCell(parent, label, w, p, S) {
   // 라벨 길이에 관계없이 모든 카드의 구분선을 동일한 x 위치에 놓아요.
   const labelSlot = top.addStack();
   labelSlot.layoutHorizontally();
-  labelSlot.size = new Size(Math.ceil(S.label * 3), 0);
-  addText(labelSlot, label, Font.semiboldSystemFont(S.label), C.label);
-  labelSlot.addSpacer();
+  labelSlot.setPadding(0, 0, 0, 0);
+  labelSlot.size = new Size(Math.ceil(S.label * 4), 0);
+  const labelText = addText(labelSlot, label, Font.semiboldSystemFont(S.label), C.label);
+  labelText.minimumScaleFactor = 0.9;
   top.addSpacer(3);
   addText(top, "|", Font.systemFont(S.timer), C.separator);
   top.addSpacer(4);
