@@ -32,8 +32,8 @@ const C = {
 // 중간·큰 위젯은 사진처럼 2×2 카드. 작은 위젯은 선택한 서비스만 세로로 표시해요.
 const SIZES = {
   small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4 },
-  medium: { name: 10, label: 8, pct: 10, bar: 2, timer: 7, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 9, radius: 13 },
-  large: { name: 15, label: 12, pct: 20, bar: 5, timer: 10, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 11, radius: 22 },
+  medium: { name: 10, label: 8, pct: 10, bar: 3, timer: 8, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 8, footerInset: 6, radius: 13 },
+  large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 22 },
 };
 
 // 로고를 스크립트에 함께 넣어서 네트워크나 이미지 캐시 없이 표시해요.
@@ -172,7 +172,7 @@ function addUsageCell(parent, label, w, p, S) {
   top.addSpacer(4);
   const caption = !p?.connected ? "연결 안 됨" : !w ? "제공 안 됨" : remain(w.resets_at) || "초기화 정보 없음";
   const timer = addText(top, caption, Font.systemFont(S.timer), C.muted);
-  timer.minimumScaleFactor = 0.65;
+  timer.minimumScaleFactor = 0.8;
   top.addSpacer();
   const value = w && Number.isFinite(w.used_percent) ? Math.max(0, Math.min(100, w.used_percent)) : null;
   const color = value === null ? C.muted : levelColor(value);
@@ -242,6 +242,7 @@ function addFooter(parent, S, updated) {
   const f = parent.addStack();
   f.layoutHorizontally();
   f.centerAlignContent();
+  if (S.footerInset) f.addSpacer(S.footerInset);
   addText(f, updated, Font.systemFont(S.footer || Math.max(9, S.label - 2)), C.muted);
   f.addSpacer();
   addRefreshIcon(f, S, true);
@@ -385,7 +386,7 @@ if (MANUAL) {
   const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 4);
   const S = { ...(SIZES[family] || SIZES.medium) };
   if (family !== "small" && family !== "large" && gridSize(family).width <= 292) {
-    Object.assign(S, { pad: 4, name: 9, label: 7.5, pct: 9, icon: 11, timer: 6 });
+    Object.assign(S, { pad: 4, name: 9, label: 7.5, pct: 9, icon: 11, timer: 7 });
   }
   const widget = new ListWidget();
   const updated = lastUpdated(data, names);
