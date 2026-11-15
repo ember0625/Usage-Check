@@ -13,7 +13,7 @@ const PENDING_KEY = "claude:pending";
 
 const LABELS = {
   five_hour: "5시간",
-  seven_day: "주간 (전체 모델)",
+  seven_day: "주간",
   seven_day_opus: "주간 (Opus)",
   seven_day_sonnet: "주간 (Sonnet)",
   seven_day_oauth_apps: "주간 (연동 앱)",

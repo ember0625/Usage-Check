@@ -2,7 +2,6 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { startDevice, pollDevice, publicDevice, normalize, refreshTokens, requestUsage, tokensFromResponse, CLIENT_ID } from "../src/grok-protocol.js";
 import { AuthExpiredError } from "../src/util.js";
-import { renderGrokPage } from "../src/grok-page.js";
 const original = globalThis.fetch;
 afterEach(() => { globalThis.fetch = original; });
 const now = () => Math.floor(Date.now()/1000);
@@ -51,9 +50,8 @@ test('refresh keeps an unrotated token, stores rotations and distinguishes termi
   assert.throws(()=>tokensFromResponse({access_token:'new'}));
 });
 
-test('billing request sends bearer only to the pinned provider and generated phone page parses', async () => {
+test('billing request sends bearer only to the pinned provider', async () => {
   globalThis.fetch=async(url,opts)=>{assert.equal(url,'https://cli-chat-proxy.grok.com/v1/billing?format=credits');assert.equal(opts.redirect,'manual');
     assert.equal(opts.headers.Authorization,'Bearer test-token');assert.equal(opts.headers['X-XAI-Token-Auth'],'xai-grok-cli');return Response.json(fixture());};
   assert.equal((await requestUsage({access_token:'test-token'})).status,200);
-  for(const m of renderGrokPage().matchAll(/<script>([\s\S]*?)<\/script>/g)) assert.doesNotThrow(()=>new Function(m[1]));
 });

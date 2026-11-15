@@ -16,7 +16,7 @@ export async function fetchUsage(env) {
     if (!tokens) return null;
     response = await requestUsage(tokens);
   }
-  if (response.status === 401) throw new AuthExpiredError("Grok 로그인이 만료됐어요. 다시 연결해 주세요.");
-  if (!response.ok) throw new Error(`Grok 사용량 조회 실패 (HTTP ${response.status}). 잠시 후 다시 조회해 주세요.`);
+  if (response.status === 401) throw new AuthExpiredError("사용량 조회 거부: HTTP 401");
+  if (!response.ok) throw new Error(`사용량 조회 실패: HTTP ${response.status}`);
   return normalize(await response.json().catch(() => null));
 }

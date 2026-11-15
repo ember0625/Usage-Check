@@ -89,16 +89,16 @@ export function tokensFromResponse(data, previous = {}) {
 }
 
 export async function refreshTokens(previous) {
-  if (!previous.refresh_token) throw new AuthExpiredError("Grok 로그인이 만료됐어요. 다시 연결해 주세요.");
+  if (!previous.refresh_token) throw new AuthExpiredError("토큰 갱신 실패: 갱신용 토큰이 없어요");
   const values = { grant_type: "refresh_token", refresh_token: previous.refresh_token };
   if (previous.principal_type) values.principal_type = previous.principal_type;
   if (previous.principal_id) values.principal_id = previous.principal_id;
   const { response, data } = await form("/oauth2/token", values);
   if (!response.ok) {
     if (["invalid_grant", "invalid_client"].includes(data?.error) || response.status === 401) {
-      throw new AuthExpiredError("Grok 로그인이 만료됐어요. 다시 연결해 주세요.");
+      throw new AuthExpiredError(`토큰 갱신 실패: HTTP ${response.status}`);
     }
-    throw new Error(`Grok 로그인 갱신 실패 (HTTP ${response.status}). 잠시 후 다시 시도해 주세요.`);
+    throw new Error(`토큰 갱신 실패: HTTP ${response.status}`);
   }
   return tokensFromResponse(data, previous);
 }
@@ -116,7 +116,7 @@ export function normalize(data) {
   const end = typeof period?.end === "string" ? Date.parse(period.end) : NaN;
   if (period?.type !== "USAGE_PERIOD_TYPE_WEEKLY" || !Number.isFinite(end) ||
       typeof percent !== "number" || !Number.isFinite(percent) || percent < 0 || percent > 100) {
-    throw new Error("Grok 주간 사용량을 확인하지 못했어요. 해당 계정의 사용량 제공 여부를 확인하거나 잠시 후 다시 조회해 주세요.");
+    throw new Error("사용량 조회 실패: 응답에 주간 사용량이 없어요");
   }
   // Shared subscription allowance, not API spending or this device's message count.
   return { windows: [{ id: "grok-weekly", label: "주간", used_percent: percent, resets_at: Math.floor(end / 1000) }] };
