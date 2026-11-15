@@ -14,7 +14,7 @@ const MANUAL = !config.runsInWidget && args.queryParameters && args.queryParamet
 
 // Fluent 참고 시안: 차분한 표면·테두리, 사용량 단계별 초록·주황·빨강.
 const C = {
-  bg: new Color("#1B1D20"),      // 대시보드 카드 배경
+  bg: new Color("#1B1D20"),      // 위젯·대시보드 배경
   card: new Color("#232426"),
   edge: new Color("#454950", 0.8),
   separator: new Color("#858B95"),

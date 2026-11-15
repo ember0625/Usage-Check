@@ -1,16 +1,17 @@
 import { BRAND_LOGOS } from "./brand-logos.js";
 
 export const ICON_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0C0D10"/><rect x="14" y="34" width="9" height="18" rx="3" fill="#D97757"/><rect x="28" y="22" width="9" height="30" rx="3" fill="#2DC8A8"/><rect x="42" y="12" width="9" height="40" rx="3" fill="#8B8E96"/></svg>';
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1B1D20"/><rect x="14" y="34" width="9" height="18" rx="3" fill="#D97757"/><rect x="28" y="22" width="9" height="30" rx="3" fill="#2DC8A8"/><rect x="42" y="12" width="9" height="40" rx="3" fill="#8B8E96"/></svg>';
 
-// Claude Design "AI 사용량 모바일 인터페이스" 핸드오프를 따른 스타일이에요.
+// iOS 위젯과 같은 Fluent 참고 디자인: 차분한 표면·은은한 그라데이션·테두리, 사용량 단계별 초록·주황·빨강.
+// (위젯 색은 src/widget.js의 C와 같아요.)
 const STYLE = `
 :root {
-  --bg: #0C0D10; --card: #15171B; --inset: #0F1013;
-  --line: rgba(255,255,255,.06); --line2: rgba(255,255,255,.12);
-  --text: #ECEDEF; --text2: #D7D9DE; --text3: #C9CBD1;
-  --muted: #9A9DA5; --muted2: #8B8E96; --muted3: #7C8088; --muted4: #6B6F77;
-  --track: #24272D; --ok: #3DD68C; --warn: #F2B544; --bad: #F06B5F;
+  --bg: #1B1D20; --card: #26292E; --surface: linear-gradient(135deg, #2B2E34, #24272C); --inset: #1F2124;
+  --edge: rgba(69,73,80,.8); --line: rgba(255,255,255,.08); --line2: rgba(255,255,255,.14);
+  --text: #F2F3F5; --text2: #E6E8EC; --text3: #E2E4E8;
+  --muted: #AFB3BC; --muted2: #A3A7B0; --muted3: #969AA3; --muted4: #878B94;
+  --track: #444851; --ok: #6CD18C; --warn: #EEA15C; --bad: #F06B5F;
   --danger: #E8857A; --danger-text: #F09A8F;
   --claude: #D97757; --codex: #2DC8A8; --gemini: #8AB4F8;
 }
@@ -46,7 +47,7 @@ h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.025em; lin
 }
 
 .cards { display: flex; flex-direction: column; gap: 14px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 20px 20px 14px; }
+.card { background: var(--card); background-image: var(--surface); border: 1px solid var(--edge); border-radius: 22px; padding: 20px 20px 14px; }
 .card-head { display: flex; align-items: center; gap: 10px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .logo { width: 24px; height: 24px; border-radius: 7px; flex: none; display: block; }
@@ -88,7 +89,7 @@ h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.02em; flex
 .chip.danger { background: rgba(232,133,122,.16); color: var(--danger-text); font-weight: 600; }
 pre.raw {
   margin: 0 0 6px; padding: 12px 14px; background: var(--inset); border: 1px solid rgba(255,255,255,.04); border-radius: 12px;
-  font: 11.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: #A8ABB2; overflow: auto; max-height: 220px;
+  font: 11.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); overflow: auto; max-height: 220px;
   animation: fadein .18s ease-out;
 }
 
@@ -666,7 +667,7 @@ function shell(body, script = "") {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0C0D10">
+<meta name="theme-color" content="#1B1D20">
 <meta name="color-scheme" content="dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
