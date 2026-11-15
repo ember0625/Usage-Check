@@ -32,8 +32,8 @@ const MANIFEST = JSON.stringify({
   short_name: "사용량",
   start_url: "/",
   display: "standalone",
-  background_color: "#0C0D10",
-  theme_color: "#0C0D10",
+  background_color: "#1B1D20",
+  theme_color: "#1B1D20",
   icons: [
     {
       src: "data:image/svg+xml," + encodeURIComponent(ICON_SVG),
