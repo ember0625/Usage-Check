@@ -15,9 +15,9 @@ for (const [family, parameter, expected] of [
   test(`Scriptable ${family} widget with parameter '${parameter}' includes the intended providers`, async () => {
     const texts = [], images = [], stacks = [];
     class Stack {
-      constructor() { this.children = []; stacks.push(this); }
+      constructor() { this.children = []; this.texts = []; stacks.push(this); }
       addStack() { const child = new Stack(); this.children.push(child); return child; }
-      addText(text) { texts.push(text); return {}; }
+      addText(text) { texts.push(text); this.texts.push(text); return {}; }
       addImage(image) { images.push(image); return {}; }
       addSpacer() {}
       layoutVertically() {}
@@ -41,6 +41,7 @@ for (const [family, parameter, expected] of [
       config: { runsInWidget: true, widgetFamily: family }, args: { widgetParameter: parameter },
       Script: { name: () => "test", setWidget() {}, complete() {} },
       Color: class { constructor(value) { this.value = value; } }, Size: class { constructor(width,height) { this.width=width;this.height=height; } }, ListWidget: Stack,
+      LinearGradient: class {}, Point: class { constructor(x,y) {this.x=x;this.y=y;} },
       Device: { screenSize: () => ({width:390,height:844}) },
       Data: { fromBase64String: (s) => Buffer.from(s,"base64") },
       Image: { fromData: (bytes) => { assert.equal(bytes.subarray(1,4).toString(),"PNG"); return { embedded: true }; } },
@@ -54,6 +55,9 @@ for (const [family, parameter, expected] of [
     assert.deepEqual(texts.filter((t) => ["Claude", "Codex", "Gemini", "Grok"].includes(t)), expected);
     assert.equal(images.filter((image) => image.embedded).length, expected.length, "every displayed provider uses an embedded logo");
     if (family !== "small") {
+      const labelSlots = stacks.filter(s => s.size && s.texts.some(t => t === "5시간" || t === "주간"));
+      assert.equal(new Set(labelSlots.map(s => s.size.width)).size, 1, "all limit labels reserve the same width before the separator");
+      assert.equal(texts.filter(t => t === "|").length, expected.reduce((n, name) => n + (name === "Grok" ? 1 : 2), 0));
       const cards = stacks.filter((s) => s.backgroundColor?.value === "#232426");
       assert.equal(cards.length, expected.length);
       if (expected.length === 4) {

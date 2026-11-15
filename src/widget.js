@@ -12,28 +12,30 @@ const REFRESH = "scriptable:///run/" + encodeURIComponent(Script.name()) + "?ref
 // 새로고침 버튼으로 실행됐는지 (앱 안에서 실행될 때만 true)
 const MANUAL = !config.runsInWidget && args.queryParameters && args.queryParameters.refresh === "1";
 
-// 대시보드와 같은 색이에요 (다크 테마 전용, Claude Design 시안 기준).
+// Fluent 참고 시안: 차분한 표면·테두리, 사용량 단계별 주황·노랑·빨강.
 const C = {
-  bg: new Color("#1B1C1E"),      // 대시보드 카드 배경
+  bg: new Color("#1B1D20"),      // 대시보드 카드 배경
   card: new Color("#232426"),
-  text: new Color("#ECEDEF"),    // 제목
-  label: new Color("#C9CBD1"),   // 항목 이름 (5시간, 주간)
-  muted: new Color("#9A9DA5"),   // 남은 시간, 시각
-  track: new Color("#343539"),   // 막대 바탕
-  ok: new Color("#6CD18C"),
-  warn: new Color("#F2B544"),
+  edge: new Color("#454950", 0.8),
+  separator: new Color("#858B95"),
+  text: new Color("#F2F3F5"),    // 제목
+  label: new Color("#E2E4E8"),   // 항목 이름 (5시간, 주간)
+  muted: new Color("#AFB3BC"),   // 남은 시간, 시각
+  track: new Color("#444851"),   // 막대 바탕
+  ok: new Color("#EEA15C"),
+  warn: new Color("#F2D264"),
   bad: new Color("#F06B5F"),
   claude: new Color("#D97757"),
   codex: new Color("#2DC8A8"),
   gemini: new Color("#8AB4F8"),
-  grok: new Color("#ECEDEF"),
+  grok: new Color("#F2F3F5"),
 };
 
 // 중간·큰 위젯은 사진처럼 2×2 카드. 작은 위젯은 선택한 서비스만 세로로 표시해요.
 const SIZES = {
   small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4 },
-  medium: { name: 10, label: 8, pct: 10, bar: 3, timer: 8, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 8, footerInset: 6, radius: 13 },
-  large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 22 },
+  medium: { name: 10, label: 8, pct: 10, bar: 3, timer: 8, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 8, footerInset: 6, radius: 9 },
+  large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 15 },
 };
 
 // 로고를 스크립트에 함께 넣어서 네트워크나 이미지 캐시 없이 표시해요.
@@ -64,7 +66,7 @@ async function load(query = "&refresh=1" + (MANUAL ? "&force=1" : "")) {
   }
 }
 
-// 대시보드와 같은 기준: 50% 이상 노랑, 80% 이상 빨강
+// 50% 미만 주황, 50% 이상 노랑, 80% 이상 빨강
 function levelColor(p) {
   return p >= 80 ? C.bad : p >= 50 ? C.warn : C.ok;
 }
@@ -168,7 +170,14 @@ function addUsageCell(parent, label, w, p, S) {
   const top = cell.addStack();
   top.layoutHorizontally();
   top.bottomAlignContent();
-  addText(top, label, Font.mediumSystemFont(S.label), C.label);
+  // 라벨 길이에 관계없이 모든 카드의 구분선을 동일한 x 위치에 놓아요.
+  const labelSlot = top.addStack();
+  labelSlot.layoutHorizontally();
+  labelSlot.size = new Size(Math.ceil(S.label * 3), 0);
+  addText(labelSlot, label, Font.semiboldSystemFont(S.label), C.label);
+  labelSlot.addSpacer();
+  top.addSpacer(3);
+  addText(top, "|", Font.systemFont(S.timer), C.separator);
   top.addSpacer(4);
   const caption = !p?.connected ? "연결 안 됨" : !w ? "제공 안 됨" : remain(w.resets_at) || "초기화 정보 없음";
   const timer = addText(top, caption, Font.systemFont(S.timer), C.muted);
@@ -184,7 +193,7 @@ function addUsageCell(parent, label, w, p, S) {
   bar.size = new Size(S.width, S.bar);
   bar.backgroundColor = C.track;
   bar.cornerRadius = S.bar / 2;
-  if (value !== null) {
+  if (value > 0) {
     const fill = bar.addStack();
     fill.size = new Size(Math.max(S.bar, S.width * value / 100), S.bar);
     fill.backgroundColor = color;
@@ -198,6 +207,14 @@ function addProviderCard(parent, id, title, icon, p, S, width, height) {
   card.layoutVertically();
   card.size = new Size(width, height);
   card.backgroundColor = C.card;
+  const surface = new LinearGradient();
+  surface.colors = [new Color("#2B2E34"), new Color("#24272C")];
+  surface.locations = [0, 1];
+  surface.startPoint = new Point(0, 0);
+  surface.endPoint = new Point(1, 1);
+  card.backgroundGradient = surface;
+  card.borderColor = C.edge;
+  card.borderWidth = 0.6;
   card.cornerRadius = S.radius;
   card.setPadding(S.pad, S.pad, S.pad, S.pad);
   const h = card.addStack();
@@ -225,6 +242,8 @@ function addProviderCard(parent, id, title, icon, p, S, width, height) {
     const w = windows.find((window) => shortLabel(window.label) === label);
     addUsageCell(card, label, w, p, { ...S, width: width - S.pad * 2 });
   });
+  // 주간 한 줄인 Grok은 제목 아래 영역의 중앙에 배치해요.
+  if (id === "grok") card.addSpacer();
 }
 
 // 현재 그린 시각이 아니라, 표시 중인 서비스의 실제 최근 수집 성공 시각이에요.
