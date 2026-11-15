@@ -1,5 +1,7 @@
 import * as claude from "./claude.js";
 import * as codex from "./codex.js";
+import * as grok from "./grok.js";
+import { renderGrokPage } from "./grok-page.js";
 import { validateUsage as validateGeminiUsage, ERROR_MESSAGES as GEMINI_ERRORS } from "./gemini.js";
 import { ICON_SVG, renderPage } from "./page.js";
 import { widgetScript } from "./widget.js";
@@ -9,7 +11,7 @@ import { AuthExpiredError, randomToken } from "./util.js";
 // 토큰 저장소 Durable Object (wrangler.toml의 TOKENS 바인딩)
 export { TokenStore } from "./tokens.js";
 
-const PROVIDERS = { claude, codex };
+const PROVIDERS = { claude, codex, grok };
 const SESSION_COOKIE = "uc_session";
 const SESSION_TTL = 60 * 60 * 24 * 30;
 
@@ -98,6 +100,17 @@ async function handle(request, env, ctx) {
 
   if (pathname === "/api/logout" && request.method === "POST") return logout(request, env);
 
+  if (pathname === "/grok" && request.method === "GET") return html(renderGrokPage());
+  if ((pathname === "/api/grok/status" && request.method === "GET") ||
+      (pathname === "/api/grok/refresh" && request.method === "POST")) {
+    let snap = await tokenStore(env).overview(["usage:grok"]);
+    if (snap.connected.grok && (request.method === "POST" || age(snap.state["usage:grok"]) >= CLAUDE_WIDGET_MAX_AGE)) {
+      await refreshOne(env, "grok");
+      snap = await tokenStore(env).overview(["usage:grok"]);
+    }
+    return json({ connected: snap.connected.grok, usage: snap.state["usage:grok"], now: now() });
+  }
+
   if (pathname === "/api/usage" && request.method === "GET") {
     let dispatch, out;
     if (url.searchParams.get("refresh") === "1") {
@@ -131,7 +144,7 @@ async function handle(request, env, ctx) {
     });
   }
 
-  const m = pathname.match(/^\/api\/(claude|codex)\/(start|finish|poll|disconnect)$/);
+  const m = pathname.match(/^\/api\/(claude|codex|grok)\/(start|finish|poll|disconnect)$/);
   if (m && request.method === "POST") {
     const [, name, action] = m;
     const p = PROVIDERS[name];
@@ -142,11 +155,12 @@ async function handle(request, env, ctx) {
       ctx.waitUntil(refreshOne(env, name));
       return json({ ok: true });
     }
-    if (action === "poll" && name === "codex") {
+    if (action === "poll" && (name === "codex" || name === "grok")) {
       const r = await p.pollLogin(env);
-      if (!r.pending) {
+      if (!r.pending && !r.error) {
         await stateSet(env, `usage:${name}`, null);
-        ctx.waitUntil(refreshOne(env, name));
+        if (name === "grok") await refreshOne(env, name);
+        else ctx.waitUntil(refreshOne(env, name));
       }
       return json(r);
     }
@@ -197,7 +211,7 @@ async function refreshAll(env) {
 
 // 대시보드·위젯·중계 요청이 쓰는 값을 저장소에 한 번만 물어서 가져와요.
 // 결과: { connected: { claude, codex }, "usage:claude": …, "usage:codex": …, … }
-const SNAPSHOT_KEYS = ["usage:claude", "usage:codex", "usage:gemini", "dispatch:codex", LOGIN_TOKEN_KEY];
+const SNAPSHOT_KEYS = ["usage:claude", "usage:codex", "usage:gemini", "usage:grok", "dispatch:codex", LOGIN_TOKEN_KEY];
 
 async function snapshot(env) {
   const { connected, state } = await tokenStore(env).overview(SNAPSHOT_KEYS);
@@ -322,12 +336,14 @@ async function widgetData(env, url) {
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
     const refreshClaude = force || age(snap["usage:claude"]) >= CLAUDE_WIDGET_MAX_AGE;
+    const refreshGrok = snap.connected.grok && (force || age(snap["usage:grok"]) >= CLAUDE_WIDGET_MAX_AGE);
     const jobs = [];
     if (refreshClaude) jobs.push(refreshOne(env, "claude"));
+    if (refreshGrok) jobs.push(refreshOne(env, "grok"));
     jobs.push(refreshRelayIfStale(env, force, snap).then((d) => { relayRefreshing = !!d?.started || d?.reason === "recent"; relayDispatch = d; }));
     await Promise.all(jobs);
     // 새로 조회했거나 중계 요청 시각이 바뀌었을 때만 다시 읽어요.
-    if (refreshClaude || relayDispatch?.started) snap = await snapshot(env);
+    if (refreshClaude || refreshGrok || relayDispatch?.started) snap = await snapshot(env);
   }
 
   const all = await overviewFrom(env, snap, { skipLoginToken: true });
@@ -342,6 +358,7 @@ async function widgetData(env, url) {
   });
   return json({
     claude: pick(all.claude),
+    grok: pick(all.grok),
     codex: { ...pick(all.codex), refreshing: (relayRefreshing && all.codex.connected) || pending(all.codex), dispatch: relayDispatch },
     gemini: { ...pick(all.gemini), refreshing: (relayRefreshing && all.gemini.connected) || pending(all.gemini), dispatch: all.gemini.connected ? relayDispatch : null },
     now: all.now,
@@ -513,3 +530,4 @@ function html(body) {
 function manifest() {
   return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json" } });
 }
+

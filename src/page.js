@@ -664,7 +664,8 @@ export function renderPage({ authed, setupMissing }) {
   <button id="refresh" class="refresh">새로고침</button>
 </header>
 <div id="cards" class="cards"><p class="empty">불러오는 중…</p></div>
-<div class="bottom"><button id="logout" class="text-btn">로그아웃</button></div>`,
+<div class="bottom"><a class="text-btn" href="/grok">Grok 연결·사용량</a> · <button id="logout" class="text-btn">로그아웃</button></div>`,
     SCRIPT
   );
 }
+

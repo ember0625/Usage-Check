@@ -10,9 +10,10 @@
 import { DurableObject } from "cloudflare:workers";
 import { refreshTokens as refreshClaude } from "./claude.js";
 import { refreshTokens as refreshCodex } from "./codex.js";
+import { refreshTokens as refreshGrok, startDevice, pollDevice, publicDevice } from "./grok-protocol.js";
 import { AuthExpiredError } from "./util.js";
 
-const REFRESHERS = { claude: refreshClaude, codex: refreshCodex };
+const REFRESHERS = { claude: refreshClaude, codex: refreshCodex, grok: refreshGrok };
 const LEGACY_KV_KEYS = { claude: "claude:tokens", codex: "codex:tokens" };
 // 만료 10분 전부터 미리 갱신해요.
 const REFRESH_MARGIN = 600;
@@ -28,7 +29,7 @@ export class TokenStore extends DurableObject {
     let tokens = await this.ctx.storage.get(name);
     if (tokens === undefined) {
       // 처음 한 번만: 예전에 KV에 저장된 토큰을 옮겨 와요. 다시 연결할 필요가 없어요.
-      const raw = await this.env.KV.get(LEGACY_KV_KEYS[name]);
+      const raw = LEGACY_KV_KEYS[name] ? await this.env.KV.get(LEGACY_KV_KEYS[name]) : null;
       tokens = raw ? JSON.parse(raw) : null;
       await this.ctx.storage.put(name, tokens);
       if (raw) {
@@ -93,6 +94,50 @@ export class TokenStore extends DurableObject {
     return (await this.ctx.storage.get("log")) || [];
   }
 
+  // Device login and token refresh share one queue, including overlapping phone tabs.
+  async grokLogin(action) {
+    while (this.queue.grok) await this.queue.grok;
+    const job = this.grokLoginOnce(action).catch((err) => ({ error: err.message }));
+    this.queue.grok = job;
+    try { return await job; }
+    finally { if (this.queue.grok === job) delete this.queue.grok; }
+  }
+
+  async grokLoginOnce(action) {
+    const key = "grok:device";
+    if (action === "disconnect") {
+      await this.ctx.storage.delete(key);
+      await this.write("grok", null);
+      await this.setState("usage:grok", null);
+      return { ok: true };
+    }
+    let pending = await this.ctx.storage.get(key);
+    const now = Math.floor(Date.now() / 1000);
+    if (action === "start") {
+      if (!pending || pending.expires_at <= now) {
+        pending = await startDevice();
+        await this.ctx.storage.put(key, pending);
+      }
+      return publicDevice(pending);
+    }
+    if (action !== "poll") return { error: "잘못된 요청" };
+    if (!pending) return (await this.read("grok")) ? { ok: true } : { error: "Grok 연결을 먼저 시작해 주세요.", terminal: true };
+    if (pending.next_poll <= now) await this.ctx.storage.put(key, { ...pending, next_poll: now + pending.interval });
+    const result = await pollDevice(pending);
+    if (result.tokens) {
+      await this.write("grok", result.tokens);
+      await this.setState("usage:grok", null);
+      await this.ctx.storage.delete(key);
+      return { ok: true };
+    }
+    if (result.terminal) await this.ctx.storage.delete(key);
+    if (result.pending) {
+      await this.ctx.storage.put(key, result.pending);
+      return publicDevice(result.pending);
+    }
+    return result;
+  }
+
   // ---- 자주 바뀌는 값 (사용량, 중계 요청 시각, 로그인 링크 토큰) ----
   // KV는 무료 쓰기 한도가 하루 1,000회라 이런 값은 여기에 둬요. (Durable Object는 하루 10만 행)
   // 예전에 KV에 저장된 값은 처음 읽을 때 한 번만 옮겨 와요.
@@ -134,6 +179,7 @@ export function tokenStore(env) {
     getOne: async (key) => (await stub.getState([key]))[key],
     overview: (keys) => stub.overview(keys),
     setState: (key, value) => stub.setState(key, value),
+    grokLogin: (action) => stub.grokLogin(action),
     async fresh(name, opts) {
       const r = await stub.fresh(name, opts);
       if (r.error) throw r.expired ? new AuthExpiredError(r.error) : new Error(r.error);
@@ -141,3 +187,4 @@ export function tokenStore(env) {
     },
   };
 }
+

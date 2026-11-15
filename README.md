@@ -10,10 +10,17 @@ Claude·Codex·Gemini 앱의 **사용 한도(5시간·주간)를 휴대폰에서
 | **Claude** (Pro/Max) | 5시간 한도, 주간 한도. 앱·웹·Claude Code 사용량이 모두 합쳐진 값이에요 |
 | **Codex** (ChatGPT 플랜) | Codex 5시간·주간 한도 (CLI·클라우드·IDE 공용). ChatGPT 일반 채팅 한도는 아니에요 |
 | **Gemini 앱** | 앱의 5시간·주간 한도. Google 로그인 쿠키를 GitHub Secret에 별도로 등록해야 해요 |
+| **Grok** | 구독 공용 주간 사용률과 초기화 시각. 대시보드 아래 **Grok 연결·사용량**에서 아이폰으로 로그인·승인해요. 기존 위젯 디자인은 그대로예요 |
 
 - 15분마다 자동 갱신 (Claude는 Cloudflare, Codex·Gemini는 GitHub Actions가 조회)
 - 사용량에 따라 색이 바뀌어요 (50% 이상 노랑, 80% 이상 빨강)
 - iOS 홈 화면 위젯 (무료 앱 Scriptable)
+
+### Grok 연결
+
+사이트에 로그인 → 아래 **Grok 연결·사용량** → **Grok 연결** → **Grok에서 승인하기**를 누르세요.
+Grok 화면에서 같은 인증 코드인지 확인하고 개인 계정으로 승인한 뒤 원래 화면으로 돌아오면 돼요.
+쿠키 복사, PC, 추가 GitHub Secret은 필요하지 않아요. 상세한 동작과 검증 범위는 [Grok 연결 안내](docs/grok-setup.md)에 있어요.
 
 ## 시작하기 전에 꼭 읽어 주세요
 
@@ -184,3 +191,4 @@ npm run dev
 npm test
 npm run check
 ```
+
