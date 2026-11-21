@@ -32,9 +32,9 @@ const C = {
   grok: new Color("#F2F3F5"),
 };
 
-// 중간·큰 위젯은 사진처럼 2×2 카드. 작은 위젯은 선택한 서비스만 세로로 표시해요.
+// 중간·큰 위젯은 2×2 카드. 작은 위젯은 2×2 링이에요.
 const SIZES = {
-  small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4 },
+  small: { name: 12, label: 10, pad: 12, gap: 10 },
   medium: { name: 10, label: 8, pct: 10, bar: 3, timer: 8, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 8, footerInset: 6, radius: 12 },
   large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 16, pace: 10 },
 };
@@ -155,60 +155,73 @@ function addText(parent, text, font, color) {
   return t;
 }
 
-// 작은 위젯의 한도 한 줄 (이름, 퍼센트, 막대)
-function addRow(parent, w, S) {
-  const row = parent.addStack();
-  row.layoutVertically();
-  const top = row.addStack();
-  top.size = new Size(S.width, 0);
-  top.layoutHorizontally();
-  top.bottomAlignContent();
-  addText(top, shortLabel(w.label), Font.mediumSystemFont(S.label), C.label);
-  top.addSpacer();
-  // 대시보드처럼 숫자는 크게, %는 작게
-  const p = Math.max(0, Math.min(100, w.used_percent));
-  const color = levelColor(p);
-  addText(top, String(Math.round(w.used_percent)), Font.semiboldSystemFont(S.pct), color);
-  addText(top, "%", Font.semiboldSystemFont(Math.round(S.pct * 0.55)), color);
-  row.addSpacer(2);
-  // 대시보드처럼 아주 작은 값도 최소 6pt는 보이게 해요.
-  addBar(row, S.width, S.bar, p, color, w, 6);
+// ---- 작은 위젯: 배터리 위젯처럼 2×2 링 ----
+// 바깥 링 5시간, 안쪽 링 주간. 한도가 하나뿐이면(Grok, Codex Pro) 링 하나예요. 가운데에는 로고만 있어요.
+
+function ringImage(D, rings, alert) {
+  const dc = new DrawContext();
+  dc.size = new Size(D, D);
+  dc.opaque = false;
+  dc.respectScreenScale = true;
+  const W = rings.length > 1 ? 6 : 7;
+  const c = D / 2;
+  const at = (r, angle) => new Point(c + r * Math.cos(angle), c + r * Math.sin(angle));
+  rings.forEach((ring, i) => {
+    const r = c - W / 2 - i * (W + 2);
+    dc.setLineWidth(W);
+    const track = new Path();
+    track.addEllipse(new Rect(c - r, c - r, r * 2, r * 2));
+    dc.addPath(track);
+    dc.setStrokeColor(C.track);
+    dc.strokePath();
+    if (!(ring.p > 0)) return;
+    // 12시 방향에서 시계 방향으로. DrawContext에는 호(arc)가 없어서 짧은 선으로 이어 그려요.
+    const start = -Math.PI / 2;
+    const sweep = (Math.min(100, ring.p) / 100) * Math.PI * 2;
+    const steps = Math.max(2, Math.ceil(sweep / (Math.PI / 60)));
+    const arc = new Path();
+    arc.move(at(r, start));
+    for (let k = 1; k <= steps; k++) arc.addLine(at(r, start + (sweep * k) / steps));
+    dc.addPath(arc);
+    dc.setStrokeColor(ring.color);
+    dc.strokePath();
+    // 선 끝을 둥글게 (아주 작은 값도 점으로 보여요)
+    dc.setFillColor(ring.color);
+    for (const angle of [start, start + sweep]) {
+      const q = at(r, angle);
+      dc.fillEllipse(new Rect(q.x - W / 2, q.y - W / 2, W, W));
+    }
+  });
+  // 오래된 데이터(주황)·갱신 실패(빨강) 표시 점. 배경색 테두리로 링과 떨어뜨려요.
+  if (alert) {
+    dc.setFillColor(C.bg);
+    dc.fillEllipse(new Rect(D - 15, 0, 15, 15));
+    dc.setFillColor(alert);
+    dc.fillEllipse(new Rect(D - 12, 3, 9, 9));
+  }
+  return dc.getImage();
 }
 
-// 작은 위젯의 서비스 한 칸
-function addProvider(parent, name, color, icon, p, S, withRefresh) {
-  const col = parent.addStack();
-  col.layoutVertically();
-  const h = col.addStack();
-  h.size = new Size(S.width, 0);
-  h.centerAlignContent();
-  if (icon) {
-    const img = h.addImage(icon);
-    img.imageSize = new Size(S.name + 4, S.name + 4);
-    img.cornerRadius = (S.name + 4) / 4.5;
-  } else {
-    addText(h, "●", Font.systemFont(S.name - 4), color);
-  }
-  h.addSpacer(6);
-  addText(h, name, Font.boldSystemFont(S.name), C.text);
-  h.addSpacer();
-  if (withRefresh) addRefreshIcon(h, S, true);
-  col.addSpacer(S.rowGap - 2);
-  if (!p || !p.connected) return addText(col, "연결 안 됨", Font.systemFont(S.label), C.muted);
-  const ws = (p.windows || []).slice(0, 2);
-  if (!ws.length) return addText(col, "데이터 없음", Font.systemFont(S.label), C.muted);
-  ws.forEach((w, i) => {
-    if (i) col.addSpacer(S.rowGap);
-    addRow(col, w, S);
+function addRingCell(parent, name, icon, p, D) {
+  const cell = parent.addStack();
+  cell.size = new Size(D, D);
+  cell.layoutHorizontally();
+  cell.centerAlignContent();
+  const windows = p && p.connected ? p.windows || [] : [];
+  const pick = (label) => windows.find((w) => shortLabel(w.label) === label && Number.isFinite(w.used_percent));
+  const rings = [name === "grok" ? null : pick("5시간"), pick("주간")].filter(Boolean).map((w) => {
+    const v = Math.max(0, Math.min(100, w.used_percent));
+    return { p: v, color: levelColor(v) };
   });
-  if (p.fetched_at && Date.now() / 1000 - p.fetched_at > 2700) {
-    col.addSpacer(3);
-    addText(col, "오래된 데이터", Font.systemFont(S.label - 2), C.warn);
-  }
-  if (p.ok === false) {
-    col.addSpacer(4);
-    addText(col, "갱신 실패", Font.systemFont(S.label - 2), C.bad);
-  }
+  // 연결 안 됨·데이터 없음은 빈 링으로 보여줘요.
+  if (!rings.length) rings.push({ p: 0 });
+  const stale = p && p.connected && p.fetched_at && Date.now() / 1000 - p.fetched_at > 2700;
+  const alert = p && p.connected && p.ok === false ? C.bad : stale ? C.warn : null;
+  cell.backgroundImage = ringImage(D, rings, alert);
+  const size = Math.round(D * 0.34);
+  const img = cell.addImage(icon);
+  img.imageSize = new Size(size, size);
+  img.cornerRadius = size / 4.5;
 }
 
 // 카드 안에서는 라벨·초기화까지 남은 시간·퍼센트를 한 줄에 놓아요.
@@ -450,10 +463,9 @@ if (MANUAL) {
   const family = config.widgetFamily || "medium";
   const icons = Object.fromEntries(Object.keys(LOGOS).map((name) => [name, logo(name)]));
   const titles = { claude: "Claude", codex: "Codex", gemini: "Gemini", grok: "Grok" };
-  // 작은 위젯은 기존 두 서비스를 유지해요. Parameter에 gemini를 넣으면 Gemini 전용으로 쓸 수 있어요.
+  // Parameter에 claude,gemini처럼 적으면 그 서비스만 그 순서로 보여줘요.
   const requested = String(args.widgetParameter || "").toLowerCase().split(",").map((v) => v.trim()).filter((v) => Object.keys(titles).includes(v));
-  const defaults = family === "small" ? ["claude", "codex"] : ["claude", "codex", "gemini", "grok"];
-  const names = [...new Set(requested.length ? requested : defaults)].slice(0, family === "small" ? 2 : 4);
+  const names = [...new Set(requested.length ? requested : Object.keys(titles))].slice(0, 4);
   const S = { ...(SIZES[family] || SIZES.medium) };
   if (family !== "small" && family !== "large" && gridSize(family).width <= 292) {
     Object.assign(S, { pad: 4, name: 9, label: 7.5, pct: 9, icon: 11, timer: 7 });
@@ -474,11 +486,19 @@ if (MANUAL) {
     widget.addSpacer();
     addFooter(widget, S, updated);
   } else if (family === "small") {
-    widget.setPadding(11, 13, 11, 13);
-    names.forEach((name, i) => {
-      if (i) widget.addSpacer();
-      addProvider(widget, titles[name], C[name], icons[name], data[name], S, i === 0);
-    });
+    // 위젯 전체가 새로고침 링크예요 (작은 위젯은 iOS 제약으로 부분 터치가 안 돼요).
+    const side = gridSize("small").height;
+    const D = Math.floor((side - S.pad * 2 - S.gap) / 2);
+    widget.setPadding(S.pad, S.pad, S.pad, S.pad);
+    for (let i = 0; i < names.length; i += 2) {
+      if (i) widget.addSpacer(S.gap);
+      const row = widget.addStack();
+      row.layoutHorizontally();
+      names.slice(i, i + 2).forEach((name, j) => {
+        if (j) row.addSpacer(S.gap);
+        addRingCell(row, name, icons[name], data[name], D);
+      });
+    }
   } else {
     const size = gridSize(family);
     const outerX = family === "large" ? 14 : 12;
