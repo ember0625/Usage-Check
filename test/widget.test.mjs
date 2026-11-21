@@ -3,16 +3,18 @@ import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 import { widgetScript } from "../src/widget.js";
 
-for (const [family, parameter, expected] of [
+for (const [family, parameter, expected, sample = "standard"] of [
   ["small", "", ["Claude", "Codex", "Gemini", "Grok"]],
   ["small", "gemini", ["Gemini"]],
+  ["small", "gemini", ["Gemini"], "five-hour only"],
+  ["small", "gemini", ["Gemini"], "zero weekly"],
   ["small", "grok", ["Grok"]],
   ["medium", "grok", ["Grok"]],
   ["medium", "", ["Claude", "Codex", "Gemini", "Grok"]],
   ["large", "", ["Claude", "Codex", "Gemini", "Grok"]],
   ["medium", "claude,gemini", ["Claude", "Gemini"]],
 ]) {
-  test(`Scriptable ${family} widget with parameter '${parameter}' includes the intended providers`, async () => {
+  test(`Scriptable ${family} widget with parameter '${parameter}' and ${sample} data`, async () => {
     const texts = [], images = [], stacks = [];
     class Stack {
       constructor() { this.children = []; this.texts = []; stacks.push(this); }
@@ -37,6 +39,8 @@ for (const [family, parameter, expected] of [
       gemini: { ...provider, fetched_at: now - 20 },
       grok: { ...provider, windows: [{ ...weekly, label: "주간", used_percent: 7 }], fetched_at: now - 5 },
     };
+    if (sample === "five-hour only") data.gemini.windows = [five];
+    if (sample === "zero weekly") data.gemini.windows = [five, { ...weekly, used_percent: 0 }];
     const context = {
       config: { runsInWidget: true, widgetFamily: family }, args: { widgetParameter: parameter },
       Script: { name: () => "test", setWidget() {}, complete() {} },
@@ -45,15 +49,15 @@ for (const [family, parameter, expected] of [
       Rect: class { constructor(x,y,width,height) { Object.assign(this, { x, y, width, height }); } },
       Path: class { addRoundedRect(rect) { this.rect = rect; } addEllipse(rect) { this.ellipse = rect; } move() {} addLine() {} },
       DrawContext: class {
-        constructor() { this.fills = []; this.strokes = []; }
+        constructor() { this.fills = []; this.strokes = []; this.dots = []; }
         addPath(path) { this.path = path; }
         setFillColor(color) { this.color = color; }
         setStrokeColor(color) { this.stroke = color; }
         setLineWidth() {}
         fillPath() { this.fills.push({ width: this.path.rect.width, color: this.color.value }); }
-        fillEllipse() {}
-        strokePath() { this.strokes.push({ track: !!this.path.ellipse, color: this.stroke.value }); }
-        getImage() { return this.strokes.length ? { ring: { strokes: this.strokes } } : { bar: { width: this.size.width, fills: this.fills } }; }
+        fillEllipse(rect) { this.dots.push({ rect, color: this.color.value }); }
+        strokePath() { this.strokes.push({ track: this.path.ellipse, color: this.stroke.value }); }
+        getImage() { return this.strokes.length || this.dots.length ? { ring: { strokes: this.strokes, dots: this.dots } } : { bar: { width: this.size.width, fills: this.fills } }; }
       },
       Device: { screenSize: () => ({width:390,height:844}) },
       Data: { fromBase64String: (s) => Buffer.from(s,"base64") },
@@ -69,11 +73,26 @@ for (const [family, parameter, expected] of [
     if (family === "small") {
       // 작은 위젯: 글자 없이 로고 + 링. 5시간·주간이 다 있으면 링 2개, 하나뿐이면 1개.
       assert.deepEqual(texts, []);
-      const rings = stacks.filter((st) => st.backgroundImage?.ring).map((st) => st.backgroundImage.ring.strokes.filter((x) => x.track).length);
-      assert.deepEqual(rings, expected.map((name) => (name === "Codex" || name === "Grok" ? 1 : 2)));
-      for (const st of stacks.filter((x) => x.backgroundImage?.ring)) {
+      const cells = stacks.filter((st) => st.backgroundImage?.ring);
+      const rings = cells.map((st) => st.backgroundImage.ring.strokes.filter((x) => x.track).length);
+      assert.deepEqual(rings, expected.map((name) => (name === "Codex" || name === "Grok" || sample === "five-hour only" ? 1 : 2)));
+      for (const st of cells) {
         assert.equal(st.size.width, st.size.height, "rings are drawn in square cells");
         assert.ok(st.size.width >= 55, "rings stay large enough to read");
+      }
+      if (sample !== "standard") {
+        const { strokes, dots } = cells[0].backgroundImage.ring;
+        const tracks = strokes.flatMap((stroke) => stroke.track ? [stroke.track] : []);
+        const grayDots = dots.filter((dot) => dot.color === "#3A3A3C");
+        assert.ok(strokes.some((stroke) => stroke.color === "#30D158"), "five-hour usage is drawn");
+        if (sample === "five-hour only") {
+          assert.ok(grayDots.length > 0, "missing weekly usage has a dotted outer ring");
+          assert.ok(Math.max(...grayDots.map((dot) => dot.rect.x)) > tracks[0].x + tracks[0].width,
+            "weekly placeholder is outside the five-hour track");
+        } else {
+          assert.equal(grayDots.length, 0, "actual zero weekly usage keeps its solid empty track");
+          assert.ok(tracks[0].width > tracks[1].width);
+        }
       }
       return;
     }
@@ -108,7 +127,7 @@ for (const [family, parameter, expected] of [
 }
 
 
-test("widget bars shade elapsed time and the large widget predicts exhaustion", async () => {
+test("large widget keeps elapsed shading, usage colors and reset times without forecasts", async () => {
   const texts = [], bars = [];
   class Stack {
     addStack() { return new Stack(); }
@@ -117,7 +136,7 @@ test("widget bars shade elapsed time and the large widget predicts exhaustion", 
     addSpacer() {} layoutVertically() {} layoutHorizontally() {} bottomAlignContent() {} centerAlignContent() {} setPadding() {}
   }
   const now = Math.floor(Date.now() / 1000);
-  // 5시간 중 절반이 지났는데 86% 사용 → 약 24분 뒤 소진. 주간은 77% 지났는데 57% → 여유.
+  // 5시간은 절반이 지났고 86% 사용, 주간은 77%가 지났고 57% 사용.
   const claude = { connected: true, ok: true, fetched_at: now, windows: [
     { label: "5시간", used_percent: 86, resets_at: now + 9000 },
     { label: "주간", used_percent: 57, resets_at: now + Math.round(0.23 * 7 * 86400) },
@@ -146,6 +165,7 @@ test("widget bars shade elapsed time and the large widget predicts exhaustion", 
   assert.deepEqual(five.fills.map((f) => f.color), ["#3A3A3C", "#48484A", "#FF453A"], "track, elapsed shade, then usage on top");
   assert.ok(Math.abs(five.fills[1].width / five.width - 0.5) < 0.01);
   assert.ok(Math.abs(week.fills[1].width / week.width - 0.77) < 0.01);
-  assert.ok(texts.includes("24분 뒤 소진 예상"), JSON.stringify(texts));
-  assert.ok(texts.includes("여유 있음"));
+  assert.deepEqual(week.fills.map((f) => f.color), ["#3A3A3C", "#48484A", "#FFD60A"]);
+  assert.ok(texts.some((text) => /^2시간 \d+분$/.test(text)), "the five-hour reset countdown remains visible");
+  assert.ok(!texts.some((text) => /소진|여유/.test(text)), "neither a forecast nor a pace verdict is shown");
 });

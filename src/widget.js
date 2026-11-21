@@ -33,7 +33,7 @@ const C = {
 const SIZES = {
   small: { name: 12, label: 10, pad: 12, gap: 10 },
   medium: { name: 11, label: 8.5, pct: 11, bar: 3, timer: 7, icon: 14, padX: 14, padTop: 9, padBottom: 7, colGap: 12, barGap: 1, footer: 8, nameRatio: 0.27 },
-  large: { name: 14, label: 12, pct: 18, bar: 5, timer: 10, icon: 20, padX: 16, padTop: 16, padBottom: 13, colGap: 14, barGap: 3, footer: 10, pace: 9.5, nameRatio: 0.3 },
+  large: { name: 14, label: 12, pct: 18, bar: 5, timer: 10, icon: 20, padX: 16, padTop: 16, padBottom: 13, colGap: 14, barGap: 3, footer: 10, nameRatio: 0.3 },
 };
 
 // 로고를 스크립트에 함께 넣어서 네트워크나 이미지 캐시 없이 표시해요.
@@ -93,28 +93,12 @@ function period(label) {
   return m ? Number(m[1]) * { 일: 86400, 시간: 3600, 분: 60 }[m[2]] : null;
 }
 
-// 사용 속도: 주기 중 지난 비율과, 이 속도면 언제 한도에 닿는지(초기화 전일 때만)
-function pace(w) {
+// 이번 초기화 주기에서 지난 시간의 비율. 리셋 시각이나 사용량이 없으면 음영은 비워 둬요.
+function elapsedFraction(w) {
   const len = period(w && w.label);
-  if (!len || !w.resets_at || !Number.isFinite(w.used_percent)) return null;
+  if (!len || !w.resets_at || !Number.isFinite(w.used_percent)) return 0;
   const left = w.resets_at - Date.now() / 1000;
-  if (left <= 0) return null;
-  const elapsed = Math.max(0, Math.min(1, 1 - left / len));
-  const used = Math.max(0, Math.min(100, w.used_percent));
-  let eta = null;
-  // 막 초기화된 직후(주기의 5% 미만)는 예측이 크게 흔들려서 하지 않아요.
-  if (used > 0 && used < 100 && elapsed >= 0.05) {
-    const toFull = elapsed * len * (100 / used - 1);
-    if (toFull < left) eta = toFull;
-  }
-  return { elapsed, eta, used };
-}
-
-function duration(sec) {
-  const m = Math.max(1, Math.round(sec / 60)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
-  if (d) return d + "일 " + h + "시간";
-  if (h) return h + "시간 " + (m % 60) + "분";
-  return m + "분";
+  return left > 0 ? Math.max(0, Math.min(1, 1 - left / len)) : 0;
 }
 
 // 막대를 그림으로 그려요. 위젯의 칸(stack)은 겹칠 수 없어서, 지난 시간 음영 위에 사용량을 덮으려면 직접 그려야 해요.
@@ -138,10 +122,8 @@ function barImage(width, height, p, color, elapsed, minFill) {
 }
 
 function addBar(parent, width, height, p, color, w, minFill) {
-  const info = pace(w);
-  const img = parent.addImage(barImage(width, height, p, color, info ? info.elapsed : 0, minFill));
+  const img = parent.addImage(barImage(width, height, p, color, elapsedFraction(w), minFill));
   img.imageSize = new Size(width, height);
-  return info;
 }
 
 function addText(parent, text, font, color) {
@@ -166,25 +148,37 @@ function ringImage(D, rings, alert) {
   const at = (r, angle) => new Point(c + r * Math.cos(angle), c + r * Math.sin(angle));
   rings.forEach((ring, i) => {
     const r = c - W / 2 - i * (W + 2);
+    if (!ring) {
+      // 주간 값이 빠지면 바깥 자리를 점선으로 표시해 실제 0%(빈 실선)와 구분해요.
+      dc.setFillColor(C.track);
+      const dot = W / 2;
+      for (let k = 0; k < 18; k++) {
+        const q = at(r, k * 2 * Math.PI / 18);
+        dc.fillEllipse(new Rect(q.x - dot / 2, q.y - dot / 2, dot, dot));
+      }
+      return;
+    }
     dc.setLineWidth(W);
     const track = new Path();
     track.addEllipse(new Rect(c - r, c - r, r * 2, r * 2));
     dc.addPath(track);
     dc.setStrokeColor(C.track);
     dc.strokePath();
-    if (!(ring.p > 0)) return;
+    const used = Math.max(0, Math.min(100, ring.used_percent));
+    if (!used) return;
     // 12시 방향에서 시계 방향으로. DrawContext에는 호(arc)가 없어서 짧은 선으로 이어 그려요.
     const start = -Math.PI / 2;
-    const sweep = (Math.min(100, ring.p) / 100) * Math.PI * 2;
+    const sweep = (used / 100) * Math.PI * 2;
     const steps = Math.max(2, Math.ceil(sweep / (Math.PI / 60)));
     const arc = new Path();
     arc.move(at(r, start));
     for (let k = 1; k <= steps; k++) arc.addLine(at(r, start + (sweep * k) / steps));
     dc.addPath(arc);
-    dc.setStrokeColor(ring.color);
+    const color = levelColor(used);
+    dc.setStrokeColor(color);
     dc.strokePath();
     // 선 끝을 둥글게 (아주 작은 값도 점으로 보여요)
-    dc.setFillColor(ring.color);
+    dc.setFillColor(color);
     for (const angle of [start, start + sweep]) {
       const q = at(r, angle);
       dc.fillEllipse(new Rect(q.x - W / 2, q.y - W / 2, W, W));
@@ -207,12 +201,9 @@ function addRingCell(parent, name, icon, p, D) {
   cell.centerAlignContent();
   const windows = p && p.connected ? p.windows || [] : [];
   const pick = (label) => windows.find((w) => shortLabel(w.label) === label && Number.isFinite(w.used_percent));
-  const rings = [pick("주간"), name === "grok" ? null : pick("5시간")].filter(Boolean).map((w) => {
-    const v = Math.max(0, Math.min(100, w.used_percent));
-    return { p: v, color: levelColor(v) };
-  });
-  // 연결 안 됨·데이터 없음은 빈 링으로 보여줘요.
-  if (!rings.length) rings.push({ p: 0 });
+  const rings = [pick("주간")];
+  const fiveHour = name !== "grok" && pick("5시간");
+  if (fiveHour) rings.push(fiveHour);
   const stale = p && p.connected && p.fetched_at && Date.now() / 1000 - p.fetched_at > 2700;
   const alert = p && p.connected && p.ok === false ? C.bad : stale ? C.warn : null;
   cell.backgroundImage = ringImage(D, rings, alert);
@@ -232,7 +223,7 @@ function addLine(parent, text, font, color, width) {
   return t;
 }
 
-// 한도 한 칸: 이름·퍼센트 / 막대 / 남은 시간 (큰 위젯은 "이 속도면" 한 줄 더)
+// 한도 한 칸: 이름·퍼센트 / 막대 / 초기화까지 남은 시간
 function addUsageColumn(parent, label, w, p, S, width) {
   const col = parent.addStack();
   col.layoutVertically();
@@ -250,16 +241,10 @@ function addUsageColumn(parent, label, w, p, S, width) {
   addText(top, value === null ? "—" : String(Math.round(value)), Font.semiboldSystemFont(S.pct), color);
   if (value !== null) addText(top, "%", Font.mediumSystemFont(S.label), color);
   col.addSpacer(S.barGap);
-  const info = addBar(col, width, S.bar, value || 0, color, w, S.bar);
+  addBar(col, width, S.bar, value || 0, color, w, S.bar);
   col.addSpacer(S.barGap);
   const caption = !p?.connected ? "연결 안 됨" : !w ? "제공 안 됨" : remain(w.resets_at) || "초기화 정보 없음";
   addLine(col, caption, Font.systemFont(S.timer), C.muted, width).minimumScaleFactor = 0.8;
-  // 큰 위젯에만 "이 속도면 언제 소진"을 한 줄로 적어요. 중간 위젯은 음영만으로 보여줘요.
-  if (S.pace && info && value !== null && value < 100) {
-    col.addSpacer(1);
-    const fast = info.eta !== null;
-    addLine(col, fast ? duration(info.eta) + " 뒤 소진 예상" : "여유 있음", Font.mediumSystemFont(S.pace), fast ? C.warn : C.muted, width).minimumScaleFactor = 0.8;
-  }
 }
 
 // 서비스 한 줄: 로고·이름 | 5시간 | 주간
