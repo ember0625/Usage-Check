@@ -12,12 +12,9 @@ const REFRESH = "scriptable:///run/" + encodeURIComponent(Script.name()) + "?ref
 // 새로고침 버튼으로 실행됐는지 (앱 안에서 실행될 때만 true)
 const MANUAL = !config.runsInWidget && args.queryParameters && args.queryParameters.refresh === "1";
 
-// Fluent 참고 시안: 차분한 표면·테두리. 사용량 색과 바탕은 iOS 배터리 위젯과 같은 시스템 색(다크 모드).
+// 대시보드와 같은 어두운 배경. 사용량 색과 바탕은 iOS 배터리 위젯과 같은 시스템 색(다크 모드).
 const C = {
   bg: new Color("#1B1D20"),      // 위젯·대시보드 배경
-  card: new Color("#232426"),
-  edge: new Color("#454950", 0.8),
-  separator: new Color("#858B95"),
   text: new Color("#F2F3F5"),    // 제목
   label: new Color("#E2E4E8"),   // 항목 이름 (5시간, 주간)
   muted: new Color("#AFB3BC"),   // 남은 시간, 시각
@@ -32,11 +29,11 @@ const C = {
   grok: new Color("#F2F3F5"),
 };
 
-// 중간·큰 위젯은 2×2 카드. 작은 위젯은 2×2 링이에요.
+// 중간·큰 위젯은 서비스마다 한 줄 (로고·이름 | 5시간 | 주간). 작은 위젯은 2×2 링이에요.
 const SIZES = {
   small: { name: 12, label: 10, pad: 12, gap: 10 },
-  medium: { name: 10, label: 8, pct: 10, bar: 3, timer: 8, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 8, footerInset: 6, radius: 12 },
-  large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 16, pace: 10 },
+  medium: { name: 11, label: 8.5, pct: 11, bar: 3, timer: 7, icon: 14, padX: 14, padTop: 9, padBottom: 7, colGap: 12, barGap: 1, footer: 8, nameRatio: 0.27 },
+  large: { name: 14, label: 12, pct: 18, bar: 5, timer: 10, icon: 20, padX: 16, padTop: 16, padBottom: 13, colGap: 14, barGap: 3, footer: 10, pace: 9.5, nameRatio: 0.3 },
 };
 
 // 로고를 스크립트에 함께 넣어서 네트워크나 이미지 캐시 없이 표시해요.
@@ -225,90 +222,80 @@ function addRingCell(parent, name, icon, p, D) {
   img.cornerRadius = size / 4.5;
 }
 
-// 카드 안에서는 라벨·초기화까지 남은 시간·퍼센트를 한 줄에 놓아요.
-function addUsageCell(parent, label, w, p, S) {
-  const cell = parent.addStack();
-  cell.layoutVertically();
-  cell.size = new Size(S.width, 0);
-  const top = cell.addStack();
+// 왼쪽 정렬된 한 줄 글자. 고정 폭 칸은 내용을 가운데에 놓아서 오른쪽을 채워요.
+function addLine(parent, text, font, color, width) {
+  const line = parent.addStack();
+  line.layoutHorizontally();
+  line.size = new Size(width, 0);
+  const t = addText(line, text, font, color);
+  line.addSpacer();
+  return t;
+}
+
+// 한도 한 칸: 이름·퍼센트 / 막대 / 남은 시간 (큰 위젯은 "이 속도면" 한 줄 더)
+function addUsageColumn(parent, label, w, p, S, width) {
+  const col = parent.addStack();
+  col.layoutVertically();
+  col.size = new Size(width, 0);
+  // Grok의 5시간 칸은 비워 둬서, 주간 칸이 다른 줄과 같은 위치에 오게 해요.
+  if (!label) return;
+  const top = col.addStack();
   top.layoutHorizontally();
   top.bottomAlignContent();
-  // 라벨 길이에 관계없이 모든 카드의 구분선을 동일한 x 위치에 놓아요.
-  const labelSlot = top.addStack();
-  labelSlot.layoutHorizontally();
-  labelSlot.setPadding(0, 0, 0, 0);
-  labelSlot.size = new Size(Math.ceil(S.label * 4), 0);
-  const labelText = addText(labelSlot, label, Font.semiboldSystemFont(S.label), C.label);
-  labelText.minimumScaleFactor = 0.9;
-  // 고정 폭 칸은 글자를 가운데에 놓아서, 로고·막대와 같은 왼쪽 선에 맞추려고 오른쪽을 채워요.
-  labelSlot.addSpacer();
-  top.addSpacer(3);
-  addText(top, "|", Font.systemFont(S.timer), C.separator);
-  top.addSpacer(4);
-  const caption = !p?.connected ? "연결 안 됨" : !w ? "제공 안 됨" : remain(w.resets_at) || "초기화 정보 없음";
-  const timer = addText(top, caption, Font.systemFont(S.timer), C.muted);
-  timer.minimumScaleFactor = 0.8;
+  top.size = new Size(width, 0);
+  addText(top, label, Font.mediumSystemFont(S.label), C.label);
   top.addSpacer();
   const value = w && Number.isFinite(w.used_percent) ? Math.max(0, Math.min(100, w.used_percent)) : null;
   const color = value === null ? C.muted : levelColor(value);
   addText(top, value === null ? "—" : String(Math.round(value)), Font.semiboldSystemFont(S.pct), color);
   if (value !== null) addText(top, "%", Font.mediumSystemFont(S.label), color);
-  cell.addSpacer(1);
-  const info = addBar(cell, S.width, S.bar, value || 0, color, w, S.bar);
+  col.addSpacer(S.barGap);
+  const info = addBar(col, width, S.bar, value || 0, color, w, S.bar);
+  col.addSpacer(S.barGap);
+  const caption = !p?.connected ? "연결 안 됨" : !w ? "제공 안 됨" : remain(w.resets_at) || "초기화 정보 없음";
+  addLine(col, caption, Font.systemFont(S.timer), C.muted, width).minimumScaleFactor = 0.8;
   // 큰 위젯에만 "이 속도면 언제 소진"을 한 줄로 적어요. 중간 위젯은 음영만으로 보여줘요.
   if (S.pace && info && value !== null && value < 100) {
-    cell.addSpacer(3);
+    col.addSpacer(1);
     const fast = info.eta !== null;
-    addText(cell, fast ? duration(info.eta) + " 뒤 소진 예상" : "여유 있음", Font.mediumSystemFont(S.pace), fast ? C.warn : C.muted);
+    addLine(col, fast ? duration(info.eta) + " 뒤 소진 예상" : "여유 있음", Font.mediumSystemFont(S.pace), fast ? C.warn : C.muted, width).minimumScaleFactor = 0.8;
   }
 }
 
-function addProviderCard(parent, id, title, icon, p, S, width, height) {
-  const card = parent.addStack();
-  card.layoutVertically();
-  card.size = new Size(width, height);
-  card.backgroundColor = C.card;
-  const surface = new LinearGradient();
-  surface.colors = [new Color("#2B2E34"), new Color("#24272C")];
-  surface.locations = [0, 1];
-  surface.startPoint = new Point(0, 0);
-  surface.endPoint = new Point(1, 1);
-  card.backgroundGradient = surface;
-  card.borderColor = C.edge;
-  card.borderWidth = 0.6;
-  card.cornerRadius = S.radius;
-  // 큰 모서리 반경의 곡선 밖으로 로고·막대가 나가지 않도록 안전 영역을 확보해요.
-  // 세로 여백은 유지해서 두 한도 행의 높이를 줄이지 않아요.
-  const insetX = Math.max(S.pad, Math.ceil(S.radius * 0.7));
-  const contentWidth = width - insetX * 2;
-  card.setPadding(S.pad, insetX, S.pad, insetX);
-  const h = card.addStack();
-  h.size = new Size(contentWidth, 0);
-  h.layoutHorizontally();
-  h.centerAlignContent();
-  const img = h.addImage(icon);
+// 서비스 한 줄: 로고·이름 | 5시간 | 주간
+function addProviderRow(parent, id, title, icon, p, S, width) {
+  const row = parent.addStack();
+  row.layoutHorizontally();
+  row.centerAlignContent();
+  row.size = new Size(width, 0);
+  const nameWidth = Math.round(width * S.nameRatio);
+  const lead = Math.round(S.colGap / 2);
+  const colWidth = Math.floor((width - nameWidth - lead - S.colGap) / 2);
+  const head = row.addStack();
+  head.layoutHorizontally();
+  head.centerAlignContent();
+  head.size = new Size(nameWidth, 0);
+  const img = head.addImage(icon);
   img.imageSize = new Size(S.icon, S.icon);
-  img.cornerRadius = S.icon / 4;
-  h.addSpacer(6);
-  addText(h, title, Font.boldSystemFont(S.name), C.text);
-  h.addSpacer();
+  head.addSpacer(Math.round(S.icon * 0.4));
+  const name = addText(head, title, Font.boldSystemFont(S.name), C.text);
+  name.minimumScaleFactor = 0.8;
   const stale = p?.fetched_at && Date.now() / 1000 - p.fetched_at > 2700;
   if (p?.connected && (p.ok === false || stale)) {
+    head.addSpacer(3);
     const badge = SFSymbol.named("exclamationmark.circle");
-    const warning = h.addImage(badge.image);
-    warning.imageSize = new Size(S.label + 1, S.label + 1);
+    const warning = head.addImage(badge.image);
+    warning.imageSize = new Size(S.label, S.label);
     warning.tintColor = p.ok === false ? C.bad : C.warn;
   }
-  card.addSpacer();
+  head.addSpacer();
+  row.addSpacer(lead);
   const windows = p?.connected ? p.windows || [] : [];
-  // Grok에는 5시간 줄과 빈 막대 자체를 만들지 않아요.
-  const labels = id === "grok" ? ["주간"] : ["5시간", "주간"];
-  labels.forEach((label, i) => {
-    if (i) card.addSpacer(S.rowGap);
-    const w = windows.find((window) => shortLabel(window.label) === label);
-    addUsageCell(card, label, w, p, { ...S, width: contentWidth });
-  });
-  // 주간 한 줄인 Grok도 아래에 붙여서, 옆 카드의 주간 줄과 같은 높이에 놓아요.
+  const pick = (label) => windows.find((window) => shortLabel(window.label) === label);
+  // Grok에는 5시간 한도가 없어서 그 칸을 비워 둬요.
+  addUsageColumn(row, id === "grok" ? null : "5시간", id === "grok" ? null : pick("5시간"), p, S, colWidth);
+  row.addSpacer(S.colGap);
+  addUsageColumn(row, "주간", pick("주간"), p, S, colWidth);
 }
 
 // 현재 그린 시각이 아니라, 표시 중인 서비스의 실제 최근 수집 성공 시각이에요.
@@ -326,7 +313,6 @@ function addFooter(parent, S, updated) {
   const f = parent.addStack();
   f.layoutHorizontally();
   f.centerAlignContent();
-  if (S.footerInset) f.addSpacer(S.footerInset);
   addText(f, updated, Font.systemFont(S.footer || Math.max(9, S.label - 2)), C.muted);
   f.addSpacer();
   addRefreshIcon(f, S, true);
@@ -469,7 +455,7 @@ if (MANUAL) {
   const names = [...new Set(requested.length ? requested : Object.keys(titles))].slice(0, 4);
   const S = { ...(SIZES[family] || SIZES.medium) };
   if (family !== "small" && family !== "large" && gridSize(family).width <= 292) {
-    Object.assign(S, { pad: 4, name: 9, label: 7.5, pct: 9, icon: 11, timer: 7 });
+    Object.assign(S, { padX: 11, name: 9.5, label: 8, pct: 10, icon: 12, timer: 7, colGap: 9 });
   }
   const widget = new ListWidget();
   const updated = lastUpdated(data, names);
@@ -502,23 +488,13 @@ if (MANUAL) {
     }
   } else {
     const size = gridSize(family);
-    const outerX = family === "large" ? 14 : 12;
-    const outerY = family === "large" ? 14 : 9;
-    widget.setPadding(outerY, outerX, outerY, outerX);
-    const columns = names.length === 1 ? 1 : 2;
-    const rows = Math.ceil(names.length / columns);
-    const cardWidth = (size.width - outerX * 2 - S.gap * (columns - 1)) / columns;
-    const cardHeight = (size.height - outerY * 2 - Math.max(S.footer + 3, S.name + 3) - S.gap * rows) / rows;
-    for (let i = 0; i < rows; i++) {
-      if (i) widget.addSpacer(S.gap);
-      const row = widget.addStack();
-      row.layoutHorizontally();
-      names.slice(i * columns, (i + 1) * columns).forEach((name, j) => {
-        if (j) row.addSpacer(S.gap);
-        addProviderCard(row, name, titles[name], icons[name], data[name], S, cardWidth, cardHeight);
-      });
-    }
-    widget.addSpacer(S.gap);
+    widget.setPadding(S.padTop, S.padX, S.padBottom, S.padX);
+    const width = size.width - S.padX * 2;
+    names.forEach((name, i) => {
+      if (i) widget.addSpacer();
+      addProviderRow(widget, name, titles[name], icons[name], data[name], S, width);
+    });
+    widget.addSpacer();
     addFooter(widget, S, updated);
   }
 
