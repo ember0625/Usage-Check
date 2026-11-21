@@ -22,6 +22,7 @@ const C = {
   label: new Color("#E2E4E8"),   // 항목 이름 (5시간, 주간)
   muted: new Color("#AFB3BC"),   // 남은 시간, 시각
   track: new Color("#444851"),   // 막대 바탕
+  shade: new Color("#6B717C"),   // 초기화 주기 중 지난 시간만큼 밝게 칠한 바탕
   ok: new Color("#6CD18C"),
   warn: new Color("#EEA15C"),
   bad: new Color("#F06B5F"),
@@ -35,7 +36,7 @@ const C = {
 const SIZES = {
   small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4 },
   medium: { name: 10, label: 8, pct: 10, bar: 3, timer: 8, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 8, footerInset: 6, radius: 18 },
-  large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 22 },
+  large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 22, pace: 10 },
 };
 
 // 로고를 스크립트에 함께 넣어서 네트워크나 이미지 캐시 없이 표시해요.
@@ -87,6 +88,65 @@ function remain(ts) {
   return m + "분";
 }
 
+// 한도 주기 길이(초). 라벨로 알아내요: "5시간", "주간", "주간 (Opus)" 등.
+function period(label) {
+  const s = String(label || "");
+  if (s.includes("주간")) return 7 * 86400;
+  const m = s.match(/(\\d+)(일|시간|분)/);
+  return m ? Number(m[1]) * { 일: 86400, 시간: 3600, 분: 60 }[m[2]] : null;
+}
+
+// 사용 속도: 주기 중 지난 비율과, 이 속도면 언제 한도에 닿는지(초기화 전일 때만)
+function pace(w) {
+  const len = period(w && w.label);
+  if (!len || !w.resets_at || !Number.isFinite(w.used_percent)) return null;
+  const left = w.resets_at - Date.now() / 1000;
+  if (left <= 0) return null;
+  const elapsed = Math.max(0, Math.min(1, 1 - left / len));
+  const used = Math.max(0, Math.min(100, w.used_percent));
+  let eta = null;
+  // 막 초기화된 직후(주기의 5% 미만)는 예측이 크게 흔들려서 하지 않아요.
+  if (used > 0 && used < 100 && elapsed >= 0.05) {
+    const toFull = elapsed * len * (100 / used - 1);
+    if (toFull < left) eta = toFull;
+  }
+  return { elapsed, eta, used };
+}
+
+function duration(sec) {
+  const m = Math.max(1, Math.round(sec / 60)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+  if (d) return d + "일 " + h + "시간";
+  if (h) return h + "시간 " + (m % 60) + "분";
+  return m + "분";
+}
+
+// 막대를 그림으로 그려요. 위젯의 칸(stack)은 겹칠 수 없어서, 지난 시간 음영 위에 사용량을 덮으려면 직접 그려야 해요.
+function barImage(width, height, p, color, elapsed, minFill) {
+  const dc = new DrawContext();
+  dc.size = new Size(width, height);
+  dc.opaque = false;
+  dc.respectScreenScale = true;
+  const r = height / 2;
+  const fill = (w, c) => {
+    const path = new Path();
+    path.addRoundedRect(new Rect(0, 0, w, height), r, r);
+    dc.addPath(path);
+    dc.setFillColor(c);
+    dc.fillPath();
+  };
+  fill(width, C.track);
+  if (elapsed > 0) fill(Math.max(height, width * elapsed), C.shade);
+  if (p > 0) fill(Math.max(minFill, (width * p) / 100), color);
+  return dc.getImage();
+}
+
+function addBar(parent, width, height, p, color, w, minFill) {
+  const info = pace(w);
+  const img = parent.addImage(barImage(width, height, p, color, info ? info.elapsed : 0, minFill));
+  img.imageSize = new Size(width, height);
+  return info;
+}
+
 function addText(parent, text, font, color) {
   const t = parent.addText(text);
   t.font = font;
@@ -111,19 +171,8 @@ function addRow(parent, w, S) {
   addText(top, String(Math.round(w.used_percent)), Font.semiboldSystemFont(S.pct), color);
   addText(top, "%", Font.semiboldSystemFont(Math.round(S.pct * 0.55)), color);
   row.addSpacer(2);
-  const bar = row.addStack();
-  bar.size = new Size(S.width, S.bar);
-  bar.backgroundColor = C.track;
-  bar.cornerRadius = S.bar / 2;
-  bar.layoutHorizontally();
-  if (p > 0) {
-    const fill = bar.addStack();
-    // 대시보드처럼 아주 작은 값도 최소 6pt는 보이게 해요.
-    fill.size = new Size(Math.max(6, (S.width * p) / 100), S.bar);
-    fill.backgroundColor = color;
-    fill.cornerRadius = S.bar / 2;
-  }
-  bar.addSpacer();
+  // 대시보드처럼 아주 작은 값도 최소 6pt는 보이게 해요.
+  addBar(row, S.width, S.bar, p, color, w, 6);
 }
 
 // 작은 위젯의 서비스 한 칸
@@ -189,18 +238,13 @@ function addUsageCell(parent, label, w, p, S) {
   addText(top, value === null ? "—" : String(Math.round(value)), Font.semiboldSystemFont(S.pct), color);
   if (value !== null) addText(top, "%", Font.mediumSystemFont(S.label), color);
   cell.addSpacer(1);
-  const bar = cell.addStack();
-  bar.layoutHorizontally();
-  bar.size = new Size(S.width, S.bar);
-  bar.backgroundColor = C.track;
-  bar.cornerRadius = S.bar / 2;
-  if (value > 0) {
-    const fill = bar.addStack();
-    fill.size = new Size(Math.max(S.bar, S.width * value / 100), S.bar);
-    fill.backgroundColor = color;
-    fill.cornerRadius = S.bar / 2;
+  const info = addBar(cell, S.width, S.bar, value || 0, color, w, S.bar);
+  // 큰 위젯에만 "이 속도면 언제 소진"을 한 줄로 적어요. 중간 위젯은 음영만으로 보여줘요.
+  if (S.pace && info && value !== null && value < 100) {
+    cell.addSpacer(3);
+    const fast = info.eta !== null;
+    addText(cell, fast ? duration(info.eta) + " 뒤 소진 예상" : "여유 있음", Font.mediumSystemFont(S.pace), fast ? C.warn : C.muted);
   }
-  bar.addSpacer();
 }
 
 function addProviderCard(parent, id, title, icon, p, S, width, height) {

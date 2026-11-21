@@ -11,7 +11,7 @@ const STYLE = `
   --edge: rgba(69,73,80,.8); --line: rgba(255,255,255,.08); --line2: rgba(255,255,255,.14);
   --text: #F2F3F5; --text2: #E6E8EC; --text3: #E2E4E8;
   --muted: #AFB3BC; --muted2: #A3A7B0; --muted3: #969AA3; --muted4: #878B94;
-  --track: #444851; --ok: #6CD18C; --warn: #EEA15C; --bad: #F06B5F;
+  --track: #444851; --shade: #6B717C; --ok: #6CD18C; --warn: #EEA15C; --bad: #F06B5F;
   --danger: #E8857A; --danger-text: #F09A8F;
   --claude: #D97757; --codex: #2DC8A8; --gemini: #8AB4F8;
 }
@@ -61,8 +61,18 @@ h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.02em; flex
 .pct { display: flex; align-items: baseline; gap: 1px; transition: color .3s; }
 .pct-num { font-size: 30px; font-weight: 650; letter-spacing: -0.03em; line-height: 1; }
 .pct-sign { font-size: 16px; font-weight: 600; }
-.bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
-.fill { height: 100%; border-radius: 3px; transition: width .6s cubic-bezier(.2,.7,.2,1); }
+.bar { position: relative; height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.shade { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--shade); }
+.fill { position: relative; height: 100%; border-radius: 3px; transition: width .6s cubic-bezier(.2,.7,.2,1); }
+.pace {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px;
+  border-radius: 10px; background: rgba(255,255,255,.04); font-size: 13px; letter-spacing: -0.01em;
+}
+.pace[hidden] { display: none; }
+.pace-state { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--muted); }
+.pace-state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.pace-state.fast { color: var(--warn); }
+.pace-elapsed { color: var(--muted3); }
 .win-bottom { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; letter-spacing: -0.01em; }
 .win-left { color: var(--muted); }
 .win-at { color: var(--muted4); }
@@ -194,6 +204,31 @@ function ago(ts) {
   return Math.floor(m / 60) + "시간 전";
 }
 
+// 한도 주기 길이(초). 라벨로 알아내요: "5시간", "주간", "주간 (Opus)" 등.
+function period(label) {
+  const s = String(label || "");
+  if (s.includes("주간")) return 7 * 86400;
+  const m = s.match(/(\\d+)(일|시간|분)/);
+  return m ? Number(m[1]) * { 일: 86400, 시간: 3600, 분: 60 }[m[2]] : null;
+}
+
+// 사용 속도: 주기 중 지난 비율과, 이 속도면 언제 한도에 닿는지(초기화 전일 때만)
+function pace(label, usedPercent, resetsAt) {
+  const len = period(label);
+  if (!len || !resetsAt || !Number.isFinite(usedPercent)) return null;
+  const left = resetsAt - Date.now() / 1000;
+  if (left <= 0) return null;
+  const elapsed = Math.max(0, Math.min(1, 1 - left / len));
+  const used = Math.max(0, Math.min(100, usedPercent));
+  let eta = null;
+  // 막 초기화된 직후(주기의 5% 미만)는 예측이 크게 흔들려서 하지 않아요.
+  if (used > 0 && used < 100 && elapsed >= 0.05) {
+    const toFull = elapsed * len * (100 / used - 1);
+    if (toFull < left) eta = toFull;
+  }
+  return { elapsed, eta, used };
+}
+
 function renderWindow(w) {
   const p = Math.max(0, Math.min(100, w.used_percent));
   const color = levelColor(p);
@@ -204,13 +239,33 @@ function renderWindow(w) {
         el("span", { class: "pct-num" }, String(Math.round(w.used_percent))),
         el("span", { class: "pct-sign" }, "%"))),
     el("div", { class: "bar" },
+      el("div", { class: "shade", "data-label": w.label, "data-used": w.used_percent, "data-until": w.resets_at || "" }),
       el("div", { class: "fill", style: "width:" + (p ? "max(" + p + "%, 6px)" : "0%") + ";background:" + color })),
     el("div", { class: "win-bottom" },
       el("span", { class: "win-left", "data-reset": w.resets_at || "" }),
-      el("span", { class: "win-at" }, w.resets_at ? fmtAt(w.resets_at) : "")));
+      el("span", { class: "win-at" }, w.resets_at ? fmtAt(w.resets_at) : "")),
+    el("div", { class: "pace", hidden: true },
+      el("span", { class: "pace-state" }),
+      el("span", { class: "pace-elapsed" })));
+}
+
+// 지난 시간 음영과 "이 속도면" 줄은 시간이 흐르면 바뀌어서, 초기화 카운트다운과 함께 다시 계산해요.
+function tickPace() {
+  document.querySelectorAll(".shade").forEach((shade) => {
+    const info = pace(shade.dataset.label, Number(shade.dataset.used), Number(shade.dataset.until));
+    shade.style.width = info ? (info.elapsed * 100).toFixed(2) + "%" : "0%";
+    const row = shade.closest(".win").querySelector(".pace");
+    row.hidden = !info || info.used >= 100;
+    if (row.hidden) return;
+    const state = row.querySelector(".pace-state");
+    state.classList.toggle("fast", info.eta !== null);
+    state.textContent = info.eta !== null ? "이 속도면 " + fmtLeft(Math.max(60, info.eta)) + " 뒤 소진" : "여유 있어요";
+    row.querySelector(".pace-elapsed").textContent = "기간 " + Math.round(info.elapsed * 100) + "% 지남";
+  });
 }
 
 function tickResets() {
+  tickPace();
   const now = Date.now() / 1000;
   document.querySelectorAll("[data-reset]").forEach((n) => {
     const t = Number(n.dataset.reset);
