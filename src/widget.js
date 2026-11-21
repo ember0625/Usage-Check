@@ -35,8 +35,8 @@ const C = {
 // 중간·큰 위젯은 사진처럼 2×2 카드. 작은 위젯은 선택한 서비스만 세로로 표시해요.
 const SIZES = {
   small: { width: 120, name: 12, label: 10, pct: 13, bar: 4, rowGap: 4 },
-  medium: { name: 10, label: 8, pct: 10, bar: 3, timer: 8, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 8, footerInset: 6, radius: 18 },
-  large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 22, pace: 10 },
+  medium: { name: 10, label: 8, pct: 10, bar: 3, timer: 8, icon: 13, pad: 5, gap: 6, rowGap: 2, footer: 8, footerInset: 6, radius: 12 },
+  large: { name: 15, label: 12, pct: 20, bar: 6, timer: 11, icon: 22, pad: 13, gap: 10, rowGap: 12, footer: 10, footerInset: 6, radius: 16, pace: 10 },
 };
 
 // 로고를 스크립트에 함께 넣어서 네트워크나 이미지 캐시 없이 표시해요.
@@ -226,6 +226,8 @@ function addUsageCell(parent, label, w, p, S) {
   labelSlot.size = new Size(Math.ceil(S.label * 4), 0);
   const labelText = addText(labelSlot, label, Font.semiboldSystemFont(S.label), C.label);
   labelText.minimumScaleFactor = 0.9;
+  // 고정 폭 칸은 글자를 가운데에 놓아서, 로고·막대와 같은 왼쪽 선에 맞추려고 오른쪽을 채워요.
+  labelSlot.addSpacer();
   top.addSpacer(3);
   addText(top, "|", Font.systemFont(S.timer), C.separator);
   top.addSpacer(4);
@@ -292,8 +294,7 @@ function addProviderCard(parent, id, title, icon, p, S, width, height) {
     const w = windows.find((window) => shortLabel(window.label) === label);
     addUsageCell(card, label, w, p, { ...S, width: contentWidth });
   });
-  // 주간 한 줄인 Grok은 제목 아래 영역의 중앙에 배치해요.
-  if (id === "grok") card.addSpacer();
+  // 주간 한 줄인 Grok도 아래에 붙여서, 옆 카드의 주간 줄과 같은 높이에 놓아요.
 }
 
 // 현재 그린 시각이 아니라, 표시 중인 서비스의 실제 최근 수집 성공 시각이에요.
