@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 import { widgetScript } from "../src/widget.js";
 
 for (const [family, parameter, expected] of [
-  ["small", "", ["Claude", "Codex"]],
+  ["small", "", ["Claude", "Codex", "Gemini", "Grok"]],
   ["small", "gemini", ["Gemini"]],
   ["small", "grok", ["Grok"]],
   ["medium", "grok", ["Grok"]],
@@ -43,13 +43,17 @@ for (const [family, parameter, expected] of [
       Color: class { constructor(value) { this.value = value; } }, Size: class { constructor(width,height) { this.width=width;this.height=height; } }, ListWidget: Stack,
       LinearGradient: class {}, Point: class { constructor(x,y) {this.x=x;this.y=y;} },
       Rect: class { constructor(x,y,width,height) { Object.assign(this, { x, y, width, height }); } },
-      Path: class { addRoundedRect(rect) { this.rect = rect; } },
+      Path: class { addRoundedRect(rect) { this.rect = rect; } addEllipse(rect) { this.ellipse = rect; } move() {} addLine() {} },
       DrawContext: class {
-        constructor() { this.fills = []; }
+        constructor() { this.fills = []; this.strokes = []; }
         addPath(path) { this.path = path; }
         setFillColor(color) { this.color = color; }
+        setStrokeColor(color) { this.stroke = color; }
+        setLineWidth() {}
         fillPath() { this.fills.push({ width: this.path.rect.width, color: this.color.value }); }
-        getImage() { return { bar: { width: this.size.width, fills: this.fills } }; }
+        fillEllipse() {}
+        strokePath() { this.strokes.push({ track: !!this.path.ellipse, color: this.stroke.value }); }
+        getImage() { return this.strokes.length ? { ring: { strokes: this.strokes } } : { bar: { width: this.size.width, fills: this.fills } }; }
       },
       Device: { screenSize: () => ({width:390,height:844}) },
       Data: { fromBase64String: (s) => Buffer.from(s,"base64") },
@@ -61,8 +65,19 @@ for (const [family, parameter, expected] of [
       Request: class { async loadImage() { return {}; } async loadJSON() { return data; } },
     };
     await runInNewContext("(async () => {" + widgetScript("https://example.test", "fake-key") + "})()", context);
-    assert.deepEqual(texts.filter((t) => ["Claude", "Codex", "Gemini", "Grok"].includes(t)), expected);
     assert.equal(images.filter((image) => image.embedded).length, expected.length, "every displayed provider uses an embedded logo");
+    if (family === "small") {
+      // 작은 위젯: 글자 없이 로고 + 링. 5시간·주간이 다 있으면 링 2개, 하나뿐이면 1개.
+      assert.deepEqual(texts, []);
+      const rings = stacks.filter((st) => st.backgroundImage?.ring).map((st) => st.backgroundImage.ring.strokes.filter((x) => x.track).length);
+      assert.deepEqual(rings, expected.map((name) => (name === "Codex" || name === "Grok" ? 1 : 2)));
+      for (const st of stacks.filter((x) => x.backgroundImage?.ring)) {
+        assert.equal(st.size.width, st.size.height, "rings are drawn in square cells");
+        assert.ok(st.size.width >= 55, "rings stay large enough to read");
+      }
+      return;
+    }
+    assert.deepEqual(texts.filter((t) => ["Claude", "Codex", "Gemini", "Grok"].includes(t)), expected);
     if (family !== "small") {
       const labelSlots = stacks.filter(s => s.size && s.texts.some(t => t === "5시간" || t === "주간"));
       assert.equal(new Set(labelSlots.map(s => s.size.width)).size, 1, "all limit labels reserve the same width before the separator");
