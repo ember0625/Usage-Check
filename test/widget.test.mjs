@@ -79,31 +79,14 @@ for (const [family, parameter, expected] of [
     }
     assert.deepEqual(texts.filter((t) => ["Claude", "Codex", "Gemini", "Grok"].includes(t)), expected);
     if (family !== "small") {
-      const labelSlots = stacks.filter(s => s.size && s.texts.some(t => t === "5시간" || t === "주간"));
-      assert.equal(new Set(labelSlots.map(s => s.size.width)).size, 1, "all limit labels reserve the same width before the separator");
-      assert.equal(texts.filter(t => t === "|").length, expected.reduce((n, name) => n + (name === "Grok" ? 1 : 2), 0));
-      const cards = stacks.filter((s) => s.backgroundColor?.value === "#232426");
-      assert.equal(cards.length, expected.length);
-      const descendants = node => node.children.flatMap(c => [c, ...descendants(c)]);
-      for (const card of cards) {
-        const [top, right, bottom, left] = card.padding;
-        const r = card.cornerRadius;
-        for (const y of [top, bottom]) for (const x of [left, right]) {
-          const dx = Math.max(0, r - x), dy = Math.max(0, r - y);
-          assert.ok(dx * dx + dy * dy <= (r - card.borderWidth) ** 2, "content corners stay inside the rounded card border");
-        }
-        const bars = descendants(card).flatMap(s => s.images || []).filter(node => node.image.bar);
-        assert.ok(bars.length > 0);
-        for (const node of bars) {
-          assert.equal(node.imageSize.width, card.size.width - left - right, "full usage tracks respect both safe insets");
-          assert.equal(node.image.bar.fills[0].color, "#3A3A3C");
-          assert.equal(node.image.bar.fills[0].width, node.imageSize.width);
-        }
-      }
-      if (expected.length === 4) {
-        assert.equal(stacks.filter((s) => s.children.filter((c) => cards.includes(c)).length === 2).length, 2, "four cards form two rows of two");
-        assert.equal(new Set(cards.map((c) => c.size.height)).size, 1, "Grok retains the same card height");
-      }
+      assert.equal(texts.includes("|"), false, "the row layout has no separators");
+      // 서비스마다 한 줄. 모든 막대는 같은 폭이라 5시간·주간 칸이 줄마다 같은 위치에 와요.
+      const bars = stacks.flatMap((st) => st.images || []).filter((node) => node.image.bar);
+      assert.equal(bars.length, expected.reduce((n, name) => n + (name === "Grok" ? 1 : 2), 0));
+      assert.equal(new Set(bars.map((node) => node.imageSize.width)).size, 1, "all limit columns share one width");
+      for (const node of bars) assert.equal(node.image.bar.fills[0].color, "#3A3A3C");
+      const rows = stacks.filter((st) => st.size?.width && st.texts.some((t) => ["Claude", "Codex", "Gemini", "Grok"].includes(t)));
+      assert.equal(rows.length, expected.length, "one row per provider");
       const latest = Math.max(...expected.map((name) => data[name.toLowerCase()].fetched_at));
       assert.ok(texts.includes("최근 갱신 " + latest * 1000), "uses actual latest timestamp among displayed services, not render time or hidden services");
       assert.equal(texts.includes("마지막 수집값"), false);
