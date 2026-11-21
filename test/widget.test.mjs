@@ -96,7 +96,7 @@ for (const [family, parameter, expected] of [
         assert.ok(bars.length > 0);
         for (const node of bars) {
           assert.equal(node.imageSize.width, card.size.width - left - right, "full usage tracks respect both safe insets");
-          assert.equal(node.image.bar.fills[0].color, "#444851");
+          assert.equal(node.image.bar.fills[0].color, "#3A3A3C");
           assert.equal(node.image.bar.fills[0].width, node.imageSize.width);
         }
       }
@@ -160,7 +160,7 @@ test("widget bars shade elapsed time and the large widget predicts exhaustion", 
   await runInNewContext("(async () => {" + widgetScript("https://example.test", "k") + "})()", context);
   assert.equal(bars.length, 2);
   const [five, week] = bars;
-  assert.deepEqual(five.fills.map((f) => f.color), ["#444851", "#6B717C", "#F06B5F"], "track, elapsed shade, then usage on top");
+  assert.deepEqual(five.fills.map((f) => f.color), ["#3A3A3C", "#48484A", "#FF453A"], "track, elapsed shade, then usage on top");
   assert.ok(Math.abs(five.fills[1].width / five.width - 0.5) < 0.01);
   assert.ok(Math.abs(week.fills[1].width / week.width - 0.77) < 0.01);
   assert.ok(texts.includes("24분 뒤 소진 예상"), JSON.stringify(texts));
