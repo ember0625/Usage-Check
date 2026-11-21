@@ -3,7 +3,9 @@ import { BRAND_LOGOS } from "./brand-logos.js";
 export const ICON_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1B1D20"/><rect x="14" y="34" width="9" height="18" rx="3" fill="#D97757"/><rect x="28" y="22" width="9" height="30" rx="3" fill="#2DC8A8"/><rect x="42" y="12" width="9" height="40" rx="3" fill="#8B8E96"/></svg>';
 
-// iOS 위젯과 같은 Fluent 참고 디자인: 차분한 표면·은은한 그라데이션·테두리, 사용량 단계별 초록·주황·빨강.
+// iOS 위젯과 같은 Fluent 참고 디자인: 차분한 표면·은은한 그라데이션·테두리.
+// 사용량 색은 iOS 배터리 위젯과 같은 시스템 색(다크 모드)이에요: 초록·노랑·빨강.
+// 막대 바탕은 배터리 위젯(#2C2C2E)보다 한 단계 밝은 systemGray4예요. 우리 배경이 더 밝아서 같은 대비를 내려면 필요해요.
 // (위젯 색은 src/widget.js의 C와 같아요.)
 const STYLE = `
 :root {
@@ -11,7 +13,7 @@ const STYLE = `
   --edge: rgba(69,73,80,.8); --line: rgba(255,255,255,.08); --line2: rgba(255,255,255,.14);
   --text: #F2F3F5; --text2: #E6E8EC; --text3: #E2E4E8;
   --muted: #AFB3BC; --muted2: #A3A7B0; --muted3: #969AA3; --muted4: #878B94;
-  --track: #444851; --shade: #6B717C; --ok: #6CD18C; --warn: #EEA15C; --bad: #F06B5F;
+  --track: #3A3A3C; --shade: #48484A; --ok: #30D158; --warn: #FFD60A; --bad: #FF453A;
   --danger: #E8857A; --danger-text: #F09A8F;
   --claude: #D97757; --codex: #2DC8A8; --gemini: #8AB4F8;
 }

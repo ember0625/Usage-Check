@@ -12,7 +12,7 @@ const REFRESH = "scriptable:///run/" + encodeURIComponent(Script.name()) + "?ref
 // 새로고침 버튼으로 실행됐는지 (앱 안에서 실행될 때만 true)
 const MANUAL = !config.runsInWidget && args.queryParameters && args.queryParameters.refresh === "1";
 
-// Fluent 참고 시안: 차분한 표면·테두리, 사용량 단계별 초록·주황·빨강.
+// Fluent 참고 시안: 차분한 표면·테두리. 사용량 색과 바탕은 iOS 배터리 위젯과 같은 시스템 색(다크 모드).
 const C = {
   bg: new Color("#1B1D20"),      // 위젯·대시보드 배경
   card: new Color("#232426"),
@@ -21,11 +21,11 @@ const C = {
   text: new Color("#F2F3F5"),    // 제목
   label: new Color("#E2E4E8"),   // 항목 이름 (5시간, 주간)
   muted: new Color("#AFB3BC"),   // 남은 시간, 시각
-  track: new Color("#444851"),   // 막대 바탕
-  shade: new Color("#6B717C"),   // 초기화 주기 중 지난 시간만큼 밝게 칠한 바탕
-  ok: new Color("#6CD18C"),
-  warn: new Color("#EEA15C"),
-  bad: new Color("#F06B5F"),
+  track: new Color("#3A3A3C"),   // 막대·링 바탕 (systemGray4: 배경이 배터리 위젯보다 밝아서 한 단계 밝게)
+  shade: new Color("#48484A"),   // 초기화 주기 중 지난 시간만큼 밝게 칠한 바탕 (systemGray3)
+  ok: new Color("#30D158"),      // systemGreen
+  warn: new Color("#FFD60A"),    // systemYellow
+  bad: new Color("#FF453A"),     // systemRed
   claude: new Color("#D97757"),
   codex: new Color("#2DC8A8"),
   gemini: new Color("#8AB4F8"),
@@ -67,7 +67,7 @@ async function load(query = "&refresh=1" + (MANUAL ? "&force=1" : "")) {
   }
 }
 
-// 50% 미만 초록, 50% 이상 주황, 80% 이상 빨강
+// 50% 미만 초록, 50% 이상 노랑, 80% 이상 빨강
 function levelColor(p) {
   return p >= 80 ? C.bad : p >= 50 ? C.warn : C.ok;
 }
@@ -193,7 +193,7 @@ function ringImage(D, rings, alert) {
       dc.fillEllipse(new Rect(q.x - W / 2, q.y - W / 2, W, W));
     }
   });
-  // 오래된 데이터(주황)·갱신 실패(빨강) 표시 점. 배경색 테두리로 링과 떨어뜨려요.
+  // 오래된 데이터(노랑)·갱신 실패(빨강) 표시 점. 배경색 테두리로 링과 떨어뜨려요.
   if (alert) {
     dc.setFillColor(C.bg);
     dc.fillEllipse(new Rect(D - 15, 0, 15, 15));
