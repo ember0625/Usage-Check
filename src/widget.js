@@ -156,14 +156,15 @@ function addText(parent, text, font, color) {
 }
 
 // ---- 작은 위젯: 배터리 위젯처럼 2×2 링 ----
-// 바깥 링 5시간, 안쪽 링 주간. 한도가 하나뿐이면(Grok, Codex Pro) 링 하나예요. 가운데에는 로고만 있어요.
+// 바깥 링은 항상 주간, 안쪽 링은 5시간. 5시간 한도가 없으면(Grok, Codex Pro) 바깥 주간 링 하나예요.
+// 가운데에는 로고만 있어요.
 
 function ringImage(D, rings, alert) {
   const dc = new DrawContext();
   dc.size = new Size(D, D);
   dc.opaque = false;
   dc.respectScreenScale = true;
-  const W = rings.length > 1 ? 6 : 7;
+  const W = 6;
   const c = D / 2;
   const at = (r, angle) => new Point(c + r * Math.cos(angle), c + r * Math.sin(angle));
   rings.forEach((ring, i) => {
@@ -209,7 +210,7 @@ function addRingCell(parent, name, icon, p, D) {
   cell.centerAlignContent();
   const windows = p && p.connected ? p.windows || [] : [];
   const pick = (label) => windows.find((w) => shortLabel(w.label) === label && Number.isFinite(w.used_percent));
-  const rings = [name === "grok" ? null : pick("5시간"), pick("주간")].filter(Boolean).map((w) => {
+  const rings = [pick("주간"), name === "grok" ? null : pick("5시간")].filter(Boolean).map((w) => {
     const v = Math.max(0, Math.min(100, w.used_percent));
     return { p: v, color: levelColor(v) };
   });
