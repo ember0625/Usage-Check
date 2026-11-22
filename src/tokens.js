@@ -18,6 +18,9 @@ const LEGACY_KV_KEYS = { claude: "claude:tokens", codex: "codex:tokens" };
 // 만료 10분 전부터 미리 갱신해요.
 const REFRESH_MARGIN = 600;
 const MAX_LOG = 30;
+// 비밀번호 시도: IP마다 15분에 10번까지
+const LOGIN_LIMIT = 10;
+const LOGIN_WINDOW = 900;
 
 export class TokenStore extends DurableObject {
   constructor(ctx, env) {
@@ -161,6 +164,37 @@ export class TokenStore extends DurableObject {
     await this.ctx.storage.put("state:" + key, value ?? null);
   }
 
+  // ---- 비밀번호 시도 횟수 ----
+  // 예전에는 KV에 셌는데, KV는 동시에 보낸 요청끼리 횟수를 못 맞추고, 틀린 비밀번호가 쌓이면
+  // 하루 1,000회인 무료 쓰기 한도를 다 써서 내 로그인(세션 저장)까지 막힐 수 있었어요.
+  // 여기서는 요청이 하나씩 처리돼서 횟수가 정확해요.
+
+  /** 비밀번호를 확인하기 전에 시도 1회를 미리 세요. 15분 안에 10번을 넘으면 false. */
+  async loginAttempt(ip, now = Math.floor(Date.now() / 1000)) {
+    await this.pruneLoginAttempts(now);
+    const key = "loginfail:" + ip;
+    const rec = await this.ctx.storage.get(key);
+    const live = rec && rec.until > now ? rec : { count: 0, until: now + LOGIN_WINDOW };
+    if (live.count >= LOGIN_LIMIT) return false;
+    await this.ctx.storage.put(key, { count: live.count + 1, until: live.until });
+    return true;
+  }
+
+  /** 로그인에 성공하면 그 IP의 기록을 바로 지워요. */
+  async loginSucceeded(ip) {
+    await this.ctx.storage.delete("loginfail:" + ip);
+  }
+
+  // 만료된 IP 기록을 지워서 저장소가 계속 커지지 않게 해요.
+  // 시도마다 조금씩(20개)만 봐서, 누가 계속 시도해도 읽기 한도를 많이 쓰지 않아요.
+  async pruneLoginAttempts(now) {
+    const old = [];
+    for (const [key, rec] of await this.ctx.storage.list({ prefix: "loginfail:", limit: 20 })) {
+      if (!rec || rec.until <= now) old.push(key);
+    }
+    if (old.length) await this.ctx.storage.delete(old);
+  }
+
   /** 연결 여부(토큰이 있는지)와 저장된 값을 한 번에 돌려줘요. 대시보드·위젯이 여러 번 묻지 않게 해요. */
   async overview(keys) {
     const connected = {};
@@ -180,6 +214,8 @@ export function tokenStore(env) {
     overview: (keys) => stub.overview(keys),
     setState: (key, value) => stub.setState(key, value),
     grokLogin: (action) => stub.grokLogin(action),
+    loginAttempt: (ip) => stub.loginAttempt(ip),
+    loginSucceeded: (ip) => stub.loginSucceeded(ip),
     async fresh(name, opts) {
       const r = await stub.fresh(name, opts);
       if (r.error) throw r.expired ? new AuthExpiredError(r.error) : new Error(r.error);
