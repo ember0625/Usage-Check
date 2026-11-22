@@ -148,7 +148,8 @@ async function handle(request, env, ctx) {
     if (action === "poll" && (name === "codex" || name === "grok")) {
       const r = await p.pollLogin(env);
       if (!r.pending && !r.error) {
-        await stateSet(env, `usage:${name}`, null);
+        // Grok은 저장소(grokLogin)가 로그인하면서 이미 지웠어요.
+        if (name !== "grok") await stateSet(env, `usage:${name}`, null);
         if (name === "grok") await refreshOne(env, name);
         else ctx.waitUntil(refreshOne(env, name));
       }
@@ -156,7 +157,7 @@ async function handle(request, env, ctx) {
     }
     if (action === "disconnect") {
       await p.disconnect(env);
-      await stateSet(env, `usage:${name}`, null);
+      if (name !== "grok") await stateSet(env, `usage:${name}`, null);
       return json({ ok: true });
     }
   }
@@ -325,7 +326,7 @@ async function widgetData(env, url) {
   let snap = await snapshot(env);
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
-    const refreshClaude = force || age(snap["usage:claude"]) >= WIDGET_MAX_AGE;
+    const refreshClaude = snap.connected.claude && (force || age(snap["usage:claude"]) >= WIDGET_MAX_AGE);
     const refreshGrok = snap.connected.grok && (force || age(snap["usage:grok"]) >= WIDGET_MAX_AGE);
     const jobs = [];
     if (refreshClaude) jobs.push(refreshOne(env, "claude"));
@@ -433,14 +434,14 @@ async function saveRelayError(env, message, needsReconnect) {
 async function login(request, env) {
   const body = await request.json().catch(() => ({}));
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  const failKey = `loginfail:${ip}`;
-  const fails = Number(await env.KV.get(failKey)) || 0;
-  if (fails >= 10) return json({ error: "시도가 너무 많아요. 15분 뒤에 다시 해주세요." }, 429);
+  // 시도 횟수는 저장소(Durable Object)가 비밀번호 확인 전에 먼저 세요. (동시에 보내도 10회를 넘지 못해요)
+  const store = tokenStore(env);
+  if (!(await store.loginAttempt(ip))) return json({ error: "시도가 너무 많아요. 15분 뒤에 다시 해주세요." }, 429);
 
   if (!(await safeEqual(String(body.password || ""), env.DASHBOARD_PASSWORD))) {
-    await env.KV.put(failKey, String(fails + 1), { expirationTtl: 900 });
     return json({ error: "비밀번호가 틀렸어요." }, 401);
   }
+  await store.loginSucceeded(ip);
   const token = randomToken(32);
   await env.KV.put(`session:${token}`, "1", { expirationTtl: SESSION_TTL });
   return json({ ok: true }, 200, {
@@ -506,6 +507,20 @@ function json(data, status = 200, headers = {}) {
   });
 }
 
+// 페이지 안의 스크립트·스타일, data: 아이콘·로고, jsDelivr의 Pretendard 글꼴만 허용해요.
+// 외부 스크립트를 불러오거나 다른 곳으로 데이터를 보내는 건 막혀요.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline' https://cdn.jsdelivr.net",
+  "font-src https://cdn.jsdelivr.net",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
 function html(body) {
   return new Response(body, {
     headers: {
@@ -513,6 +528,7 @@ function html(body) {
       "Cache-Control": "no-store",
       "X-Frame-Options": "DENY",
       "Referrer-Policy": "no-referrer",
+      "Content-Security-Policy": CSP,
     },
   });
 }

@@ -1,7 +1,7 @@
 // Codex (ChatGPT 구독) 한도 조회.
 // Codex CLI의 기기 코드 로그인과 /backend-api/wham/usage 엔드포인트를 그대로 사용합니다(비공식).
 import { tokenStore } from "./tokens.js";
-import { AuthExpiredError, decodeJwt, getJson, putJson, readError, toEpochSeconds } from "./util.js";
+import { AuthExpiredError, decodeJwt, getJson, putJson, readError, request, toEpochSeconds } from "./util.js";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = "https://auth.openai.com";
@@ -10,7 +10,7 @@ const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const PENDING_KEY = "codex:pending";
 
 export async function startLogin(env) {
-  const res = await fetch(`${ISSUER}/api/accounts/deviceauth/usercode`, {
+  const res = await request(`${ISSUER}/api/accounts/deviceauth/usercode`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ client_id: CLIENT_ID }),
@@ -30,7 +30,7 @@ export async function startLogin(env) {
 export async function pollLogin(env) {
   const pending = await getJson(env.KV, PENDING_KEY);
   if (!pending) throw new Error("로그인 시간이 지났어요. 다시 시작해 주세요.");
-  const res = await fetch(`${ISSUER}/api/accounts/deviceauth/token`, {
+  const res = await request(`${ISSUER}/api/accounts/deviceauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ device_auth_id: pending.device_auth_id, user_code: pending.user_code }),
@@ -39,7 +39,7 @@ export async function pollLogin(env) {
   if (!res.ok) throw new Error(`승인 확인 실패: ${await readError(res)}`);
   const code = await res.json();
 
-  const tokenRes = await fetch(`${ISSUER}/oauth/token`, {
+  const tokenRes = await request(`${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -72,7 +72,7 @@ function tokensFromResponse(data, previous) {
 
 /** refresh token으로 새 토큰을 받아요. 저장과 순서 관리는 TokenStore가 해요. */
 export async function refreshTokens(tokens) {
-  const res = await fetch(`${ISSUER}/oauth/token`, {
+  const res = await request(`${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -109,11 +109,21 @@ export async function forceRefresh(env) {
  * 그럴 땐 GitHub Actions 중계(scripts/codex-relay.mjs)를 써요.
  */
 export async function fetchUsage(env) {
-  const t = await getAccessToken(env);
-  if (!t) return null;
-  const headers = { Authorization: `Bearer ${t.access_token}`, "User-Agent": "codex-cli", Accept: "application/json" };
-  if (t.account_id) headers["ChatGPT-Account-Id"] = t.account_id;
-  const res = await fetch(USAGE_URL, { headers });
+  const store = tokenStore(env);
+  let tokens = await store.fresh("codex");
+  if (!tokens) return null;
+  const call = (t) => {
+    const headers = { Authorization: `Bearer ${t.access_token}`, "User-Agent": "codex-cli", Accept: "application/json" };
+    if (t.account_id) headers["ChatGPT-Account-Id"] = t.account_id;
+    return request(USAGE_URL, { headers });
+  };
+  let res = await call(tokens);
+  // Claude·Grok처럼 거부되면 한 번만 갱신해서 다시 시도해요. 그 사이 다른 요청이 갱신했으면 그 토큰을 써요.
+  if (res.status === 401) {
+    tokens = await store.fresh("codex", { force: true, failedAccess: tokens.access_token });
+    if (!tokens) return null;
+    res = await call(tokens);
+  }
   if (res.status === 401) throw new AuthExpiredError(`사용량 조회 거부: ${await readError(res)}`);
   if (!res.ok) throw new Error(`사용량 조회 실패: ${await readError(res)}`);
   return normalize(await res.json());

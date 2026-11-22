@@ -1,7 +1,7 @@
 // Claude (Pro/Max) 구독 한도 조회.
 // Claude Code CLI가 쓰는 OAuth 로그인과 /api/oauth/usage 엔드포인트를 그대로 사용합니다(비공식).
 import { tokenStore } from "./tokens.js";
-import { AuthExpiredError, getJson, pkce, putJson, randomToken, readError, toEpochSeconds } from "./util.js";
+import { AuthExpiredError, getJson, pkce, putJson, randomToken, readError, request, toEpochSeconds } from "./util.js";
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize";
@@ -45,7 +45,7 @@ export async function finishLogin(env, pasted) {
   if (!code) throw new Error("코드를 붙여넣어 주세요.");
   if (state && state !== pending.state) throw new Error("코드가 가장 최근 로그인 요청과 맞지 않아요. 'Claude 로그인 열기'부터 다시 해주세요.");
 
-  const res = await fetch(TOKEN_URL, {
+  const res = await request(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -72,7 +72,7 @@ function tokensFromResponse(data, previous) {
 
 /** refresh token으로 새 토큰을 받아요. 저장과 순서 관리는 TokenStore가 해요. */
 export async function refreshTokens(tokens) {
-  const res = await fetch(TOKEN_URL, {
+  const res = await request(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -98,7 +98,7 @@ export async function disconnect(env) {
 export async function diagnose() {
   const probe = async (name, url, init) => {
     try {
-      const res = await fetch(url, init);
+      const res = await request(url, init);
       const text = (await res.text().catch(() => "")).trim();
       return { name, status: res.status, body: text.startsWith("<") ? "(HTML 응답)" : text.slice(0, 300) };
     } catch (err) {
@@ -126,7 +126,7 @@ export async function fetchUsage(env) {
   if (!tokens) return null;
 
   const call = (t) =>
-    fetch(USAGE_URL, {
+    request(USAGE_URL, {
       headers: {
         Authorization: `Bearer ${t.access_token}`,
         "anthropic-beta": "oauth-2025-04-20",
