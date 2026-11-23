@@ -437,7 +437,9 @@ if (MANUAL) {
   const titles = { claude: "Claude", codex: "Codex", gemini: "Gemini", grok: "Grok" };
   // Parameter에 claude,gemini처럼 적으면 그 서비스만 그 순서로 보여줘요.
   const requested = String(args.widgetParameter || "").toLowerCase().split(",").map((v) => v.trim()).filter((v) => Object.keys(titles).includes(v));
-  const names = [...new Set(requested.length ? requested : Object.keys(titles))].slice(0, 4);
+  // Parameter가 없으면 대시보드의 '표시할 서비스'에서 켠 서비스만 보여줘요.
+  const hidden = Array.isArray(data.hidden) ? data.hidden : [];
+  const names = [...new Set(requested.length ? requested : Object.keys(titles).filter((name) => !hidden.includes(name)))].slice(0, 4);
   const S = { ...(SIZES[family] || SIZES.medium) };
   if (family !== "small" && family !== "large" && gridSize(family).width <= 292) {
     Object.assign(S, { padX: 11, name: 9.5, label: 8, pct: 10, icon: 12, timer: 7, colGap: 9 });
@@ -457,6 +459,12 @@ if (MANUAL) {
     addText(widget, data.error === "unauthorized" ? "위젯 키가 바뀌었어요. 스크립트를 다시 복사하세요." : "불러오기 실패", Font.systemFont(S.label), C.bad);
     widget.addSpacer();
     addFooter(widget, S, updated);
+  } else if (!names.length) {
+    widget.setPadding(14, 15, 12, 15);
+    addText(widget, "AI 사용량", Font.boldSystemFont(S.name), C.text);
+    widget.addSpacer(6);
+    addText(widget, "보여줄 서비스가 없어요. 대시보드의 '표시할 서비스'에서 켜 주세요.", Font.systemFont(S.label), C.muted).lineLimit = 3;
+    widget.addSpacer();
   } else if (family === "small") {
     // 위젯 전체가 새로고침 링크예요 (작은 위젯은 iOS 제약으로 부분 터치가 안 돼요).
     const side = gridSize("small").height;

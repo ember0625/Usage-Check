@@ -130,6 +130,12 @@ textarea:focus, input:focus { border-color: rgba(255,255,255,.28); }
 .err { font-size: 13px; color: var(--bad); letter-spacing: -0.01em; word-break: break-word; }
 .empty { margin-top: 18px; font-size: 14px; color: var(--muted3); }
 
+.toggle-list { display: flex; flex-direction: column; }
+.toggle-row { display: flex; align-items: center; gap: 12px; min-height: 48px; cursor: pointer; }
+.toggle-row + .toggle-row { border-top: 1px solid var(--line); }
+.toggle-row .logo { width: 22px; height: 22px; }
+.toggle-name { flex: 1; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.toggle-row input { width: 22px; height: 22px; margin: 0; accent-color: var(--ok); cursor: pointer; }
 .widget-head { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; padding: 0; color: inherit; text-align: left; }
 .widget-head .tri { color: var(--muted); font-size: 10px; }
 
@@ -243,7 +249,8 @@ function tickResets() {
 
 // ---- 화면 상태 ----
 // 다시 그려도 입력값·열림 상태가 유지되도록 여기에 보관해요.
-const ui = { raw: {}, confirm: null, refreshing: false, widgetOpen: false };
+const ui = { raw: {}, confirm: null, refreshing: false, widgetOpen: false, servicesOpen: false, servicesMsg: "" };
+const SERVICES = ["claude", "codex", "gemini", "grok"];
 const flows = { claudeOpen: false, claudeDraft: "", claudeMsg: "", claudeBusy: false, device: {} };
 try { flows.claudeOpen = sessionStorage.getItem("claudeOpen") === "1"; } catch (e) {}
 
@@ -518,6 +525,46 @@ function renderGeminiCard(card, s) {
   return card;
 }
 
+// ---- 보여줄 서비스 ----
+// 구독을 잠시 쉬는 서비스는 꺼 두면 대시보드와 위젯에서 숨고, 자동 조회도 하지 않아요.
+
+function renderServicesCard() {
+  const hidden = new Set(state.hidden || []);
+  const card = el("section", { class: "card", style: ui.servicesOpen ? null : "padding-bottom:20px" },
+    el("button", { class: "widget-head", onclick: () => { ui.servicesOpen = !ui.servicesOpen; render(); } },
+      el("h2", {}, "표시할 서비스"),
+      el("span", { class: "badge" }, (SERVICES.length - hidden.size) + "/" + SERVICES.length),
+      el("span", { class: "tri" + (ui.servicesOpen ? " open" : "") }, "▶")));
+  if (!ui.servicesOpen) return card;
+  const list = el("div", { class: "toggle-list" }, SERVICES.map((name) =>
+    el("label", { class: "toggle-row" },
+      logoEl(PROVIDERS[name]),
+      el("span", { class: "toggle-name" }, PROVIDERS[name].title),
+      el("input", { type: "checkbox", checked: !hidden.has(name), "aria-label": PROVIDERS[name].title + " 표시",
+        onchange: (e) => setHidden(name, !e.target.checked) }))));
+  card.append(el("div", { class: "panel" }, list,
+    el("span", { class: ui.servicesMsg ? "err" : "note" }, ui.servicesMsg || "끈 서비스는 대시보드와 위젯에서 숨고, 자동 조회도 멈춰요. 연결은 그대로라 다시 켜면 바로 보여요.")));
+  card.append(el("div", { style: "height:6px" }));
+  return card;
+}
+
+async function setHidden(name, hide) {
+  const before = state.hidden || [];
+  const next = SERVICES.filter((n) => (n === name ? hide : before.includes(n)));
+  state.hidden = next;
+  ui.servicesMsg = "";
+  render();
+  try {
+    state.hidden = (await api("/api/settings", { method: "POST", body: JSON.stringify({ hidden: next }) })).hidden;
+    // 다시 켠 서비스는 오래된 값일 수 있어서 새로 받아와요.
+    if (!hide) load(true);
+  } catch (e) {
+    state.hidden = before;
+    ui.servicesMsg = "저장하지 못했어요: " + e.message;
+  }
+  render();
+}
+
 // ---- iOS 위젯 ----
 
 function renderWidgetCard() {
@@ -585,7 +632,11 @@ function render() {
   if (!state) return;
   const active = document.activeElement;
   const wasTyping = active && active.tagName === "TEXTAREA" && !active.readOnly;
-  $("#cards").replaceChildren(...["claude", "codex", "gemini", "grok"].map(renderCard), renderWidgetCard());
+  const hidden = new Set(state.hidden || []);
+  const shown = SERVICES.filter((name) => !hidden.has(name));
+  $("#cards").replaceChildren(
+    ...(shown.length ? shown.map(renderCard) : [el("section", { class: "card" }, el("p", { class: "empty", style: "margin:0" }, "보여줄 서비스가 없어요. 아래 '표시할 서비스'에서 켜 주세요."))]),
+    renderServicesCard(), renderWidgetCard());
   if (wasTyping) { const t = document.querySelector(".panel textarea"); if (t) t.focus(); }
   tickResets();
 }
