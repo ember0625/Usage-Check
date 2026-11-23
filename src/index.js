@@ -53,7 +53,7 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(Promise.all([refreshAll(env), refreshRelayIfStale(env)]));
+    ctx.waitUntil(snapshot(env).then((snap) => Promise.all([refreshAll(env, snap), refreshRelayIfStale(env, false, snap)])));
   },
 };
 
@@ -104,7 +104,8 @@ async function handle(request, env, ctx) {
   if (pathname === "/api/usage" && request.method === "GET") {
     let dispatch, out;
     if (url.searchParams.get("refresh") === "1") {
-      [, dispatch] = await Promise.all([refreshAll(env), dispatchRelay(env)]);
+      const snap = await snapshot(env);
+      [, dispatch] = await Promise.all([refreshAll(env, snap), dispatchRelay(env, snap)]);
       out = await readAll(env);
     } else {
       // 중계 요청은 사용량을 바꾸지 않아서, 처음 읽은 값을 그대로 화면에 써요.
@@ -115,6 +116,15 @@ async function handle(request, env, ctx) {
     if (dispatch) out.codex.dispatch = dispatch;
     if (dispatch && out.gemini.connected) out.gemini.dispatch = dispatch;
     return json(out);
+  }
+
+  // 대시보드·위젯에 보여줄 서비스 고르기 (구독을 잠시 쉬는 서비스를 숨겨요)
+  if (pathname === "/api/settings" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    if (!Array.isArray(body.hidden)) return json({ error: "잘못된 요청" }, 400);
+    const hidden = cleanHidden(body.hidden);
+    await stateSet(env, HIDDEN_KEY, hidden);
+    return json({ hidden });
   }
 
   if (pathname === "/api/claude/diag" && request.method === "GET") {
@@ -196,13 +206,27 @@ async function refreshOne(env, name) {
   await stateSet(env, `usage:${name}`, entry);
 }
 
-async function refreshAll(env) {
-  await Promise.all(Object.keys(PROVIDERS).map((n) => refreshOne(env, n)));
+// 숨긴 서비스는 조회하지 않아요. (구독을 쉬는 동안 불필요한 요청·오류를 만들지 않게)
+async function refreshAll(env, snap) {
+  const hidden = hiddenOf(snap);
+  await Promise.all(Object.keys(PROVIDERS).filter((n) => !hidden.has(n)).map((n) => refreshOne(env, n)));
+}
+
+// ---- 보여줄 서비스 ----
+const HIDDEN_KEY = "settings:hidden";
+const SERVICES = ["claude", "codex", "gemini", "grok"];
+
+function cleanHidden(list) {
+  return SERVICES.filter((name) => Array.isArray(list) && list.includes(name));
+}
+
+function hiddenOf(snap) {
+  return new Set(cleanHidden(snap?.[HIDDEN_KEY]));
 }
 
 // 대시보드·위젯·중계 요청이 쓰는 값을 저장소에 한 번만 물어서 가져와요.
 // 결과: { connected: { claude, codex }, "usage:claude": …, "usage:codex": …, … }
-const SNAPSHOT_KEYS = ["usage:claude", "usage:codex", "usage:gemini", "usage:grok", "dispatch:codex", LOGIN_TOKEN_KEY];
+const SNAPSHOT_KEYS = ["usage:claude", "usage:codex", "usage:gemini", "usage:grok", "dispatch:codex", LOGIN_TOKEN_KEY, "settings:hidden"];
 
 async function snapshot(env) {
   const { connected, state } = await tokenStore(env).overview(SNAPSHOT_KEYS);
@@ -228,6 +252,7 @@ async function overviewFrom(env, snap, { skipLoginToken = false } = {}) {
   if (!skipLoginToken && (!out.claude.connected || out.claude.usage?.needs_reconnect)) {
     out.claude.login_url = `/claude/login?t=${await claudeLoginToken(env, snap[LOGIN_TOKEN_KEY])}`;
   }
+  out.hidden = [...hiddenOf(snap)];
   out.now = now();
   return out;
 }
@@ -247,7 +272,10 @@ async function claudeLoginToken(env, saved) {
 // 연타로 워크플로가 겹치지 않게 3분에 한 번까지만 실행해요.
 async function dispatchRelay(env, snap) {
   snap ??= await snapshot(env);
-  if (!env.RELAY_SECRET || (!snap.connected.codex && !snap["usage:gemini"]?.configured)) return null;
+  const hidden = hiddenOf(snap);
+  const wantCodex = snap.connected.codex && !hidden.has("codex");
+  const wantGemini = snap["usage:gemini"]?.configured && !hidden.has("gemini");
+  if (!env.RELAY_SECRET || (!wantCodex && !wantGemini)) return null;
   const token = (env.GITHUB_TOKEN || "").trim();
   if (!token) return { started: false, reason: "no_token" };
   const last = Number(snap["dispatch:codex"]) || 0;
@@ -293,7 +321,10 @@ async function refreshRelayIfStale(env, force = false, snap) {
   snap ??= await snapshot(env);
   const xu = snap["usage:codex"];
   const gu = snap["usage:gemini"];
-  if (force || (snap.connected.codex && usesRelay(env, "codex") && age(xu) >= RELAY_MAX_AGE) || (gu?.configured && age(gu) >= RELAY_MAX_AGE)) return dispatchRelay(env, snap);
+  const hidden = hiddenOf(snap);
+  const staleCodex = snap.connected.codex && !hidden.has("codex") && usesRelay(env, "codex") && age(xu) >= RELAY_MAX_AGE;
+  const staleGemini = gu?.configured && !hidden.has("gemini") && age(gu) >= RELAY_MAX_AGE;
+  if (force || staleCodex || staleGemini) return dispatchRelay(env, snap);
   return null;
 }
 
@@ -326,8 +357,9 @@ async function widgetData(env, url) {
   let snap = await snapshot(env);
   if (url.searchParams.get("refresh") === "1") {
     const force = url.searchParams.get("force") === "1";
-    const refreshClaude = snap.connected.claude && (force || age(snap["usage:claude"]) >= WIDGET_MAX_AGE);
-    const refreshGrok = snap.connected.grok && (force || age(snap["usage:grok"]) >= WIDGET_MAX_AGE);
+    const hidden = hiddenOf(snap);
+    const refreshClaude = snap.connected.claude && !hidden.has("claude") && (force || age(snap["usage:claude"]) >= WIDGET_MAX_AGE);
+    const refreshGrok = snap.connected.grok && !hidden.has("grok") && (force || age(snap["usage:grok"]) >= WIDGET_MAX_AGE);
     const jobs = [];
     if (refreshClaude) jobs.push(refreshOne(env, "claude"));
     if (refreshGrok) jobs.push(refreshOne(env, "grok"));
@@ -352,6 +384,7 @@ async function widgetData(env, url) {
     grok: pick(all.grok),
     codex: { ...pick(all.codex), refreshing: (relayRefreshing && all.codex.connected) || pending(all.codex), dispatch: relayDispatch },
     gemini: { ...pick(all.gemini), refreshing: (relayRefreshing && all.gemini.connected) || pending(all.gemini), dispatch: all.gemini.connected ? relayDispatch : null },
+    hidden: all.hidden,
     now: all.now,
   });
 }
